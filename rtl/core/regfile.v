@@ -1,6 +1,6 @@
 `default_nettype none
 
-module regfile (
+module regfile #(parameter BYPASS = 1) (
     input  wire        clk, 
 
     input  wire [4:0]  rs1_addr, //source address of port A
@@ -40,8 +40,8 @@ module regfile (
     end
 
     //bypass flags condition -> if being written to a register in the same cycle that someone is reading that same register.
-    wire bypass_rs1 = rd_we && (rd_addr == rs1_addr) && (rs1_addr != 5'b0); 
-    wire bypass_rs2 = rd_we && (rd_addr == rs2_addr) && (rs2_addr != 5'b0);
+    wire bypass_rs1 = BYPASS && rd_we && (rd_addr == rs1_addr) && (rs1_addr != 5'b0); 
+    wire bypass_rs2 = BYPASS && rd_we && (rd_addr == rs2_addr) && (rs2_addr != 5'b0);
 
     wire [31:0] rs1_muxed = bypass_rs1 ? rd_data : regs[rs1_addr];
     wire [31:0] rs2_muxed = bypass_rs2 ? rd_data : regs[rs2_addr];

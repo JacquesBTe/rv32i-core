@@ -10,6 +10,9 @@ OBJ    := $(TB_DIR)/obj_dir/$(MODULE)
 # Per-module source lists. Default (below) is rtl/core/<MODULE>.v; add an entry
 # here only when a module needs extra files (e.g. a package or a submodule).
 RTL_selftest := $(TB_DIR)/selftest/selftest.v
+RTL_core := $(RTL)/core/core.v $(RTL)/core/regfile.v $(RTL)/core/alu.v \
+            $(RTL)/core/immgen.v $(RTL)/core/decoder.v $(RTL)/core/imem.v \
+            $(RTL)/core/dmem.v $(RTL)/core/branch_cmp.v
 
 RTL_SRCS := $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),$(RTL)/core/$(MODULE).v)
 TB_SRC   := $(TB_DIR)/tb_$(MODULE).cpp

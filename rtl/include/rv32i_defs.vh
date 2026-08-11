@@ -1,37 +1,16 @@
-`default_nettype none
+`ifndef RV32I_DEFS_VH
+`define RV32I_DEFS_VH
 
-module regfile (
-    input  wire        clk,
+// ALU operation select: {instr[30], funct3}
+`define ALU_ADD   4'b0000
+`define ALU_SLL   4'b0001
+`define ALU_SLT   4'b0010
+`define ALU_SLTU  4'b0011
+`define ALU_XOR   4'b0100
+`define ALU_SRL   4'b0101
+`define ALU_OR    4'b0110
+`define ALU_AND   4'b0111
+`define ALU_SUB   4'b1000
+`define ALU_SRA   4'b1101
 
-    input  wire [4:0]  rs1_addr,
-    output wire [31:0] rs1_data,
-
-    input  wire [4:0]  rs2_addr,
-    output wire [31:0] rs2_data,
-
-    input  wire [4:0]  rd_addr,
-    input  wire [31:0] rd_data,
-    input  wire        rd_we
-);
-
-    reg [31:0] regs [0:31];
-
-    integer i;
-    initial begin
-        // zero all 32 entries
-    end
-
-    always @(posedge clk) begin
-        // write when enabled and not x0
-    end
-
-    wire bypass_rs1 = /* three terms */;
-    wire bypass_rs2 = /* three terms */;
-
-    wire [31:0] rs1_muxed = /* bypass ? incoming : array */;
-    wire [31:0] rs2_muxed = /* same shape */;
-
-    assign rs1_data = /* x0 gate applied to rs1_muxed */;
-    assign rs2_data = /* x0 gate applied to rs2_muxed */;
-
-endmodule
+`endif
