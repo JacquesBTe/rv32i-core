@@ -18,9 +18,7 @@ module dmem #(
 
     reg [31:0] mem[0:16383]; //memory array -- 64KB of memory
 
-    initial begin
-        if (INIT_FILE != "") $readmemh(INIT_FILE, mem);
-    end
+
     //address decompostion
     wire [13:0] word_idx = addr[15:2]; //dropping the first two bits, is dividing by 4, byte 8 becomes word 2. 
     wire [1:0]  lane     = addr[1:0]; //remainder of mod 4
@@ -62,6 +60,15 @@ module dmem #(
             3'b101:  rdata = {16'b0, shifted[15:0]};               // lhu
             default: rdata = word;
         endcase
+    end
+
+    // dmem.v
+    string hexfile;
+    initial begin
+        if ($value$plusargs("dmem=%s", hexfile))
+            $readmemh(hexfile, mem);
+        else if (INIT_FILE != "")
+            $readmemh(INIT_FILE, mem);
     end
 
 endmodule

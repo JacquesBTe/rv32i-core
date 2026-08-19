@@ -11,8 +11,13 @@ module imem #(
 
     reg [31:0] mem [0:16383];
 
+    // +imem=<file> overrides INIT_FILE, so one build runs every test.
+    string hexfile;
     initial begin
-        if (INIT_FILE != "") $readmemh(INIT_FILE, mem);
+        if ($value$plusargs("imem=%s", hexfile))
+            $readmemh(hexfile, mem);
+        else if (INIT_FILE != "")
+            $readmemh(INIT_FILE, mem);
     end
 
     assign instr = mem[addr[15:2]];

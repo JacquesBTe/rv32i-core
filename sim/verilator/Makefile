@@ -12,7 +12,7 @@ OBJ    := $(TB_DIR)/obj_dir/$(MODULE)
 RTL_selftest := $(TB_DIR)/selftest/selftest.v
 RTL_core := $(RTL)/core/core.v $(RTL)/core/regfile.v $(RTL)/core/alu.v \
             $(RTL)/core/immgen.v $(RTL)/core/decoder.v $(RTL)/core/imem.v \
-            $(RTL)/core/dmem.v $(RTL)/core/branch_cmp.v
+            $(RTL)/core/dmem.v $(RTL)/core/branch_cmp.v $(RTL)/core/csr.v
 
 RTL_SRCS := $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),$(RTL)/core/$(MODULE).v)
 TB_SRC   := $(TB_DIR)/tb_$(MODULE).cpp
