@@ -35,7 +35,6 @@ module core #(
 
     // ---- IF/ID ---------------------------------------------------
     reg  [31:0] if_id_pc;
-    reg  [31:0] if_id_instr;
 
     // ---- ID ------------------------------------------------------
     wire [4:0]  rs1_addr, rs2_addr, rd_addr;
@@ -111,6 +110,8 @@ module core #(
 // ====================================================================
 
     imem #(.INIT_FILE(IMEM_INIT)) u_imem (
+        .clk(clk),
+        .en(!load_use), 
         .addr   (pc),
         .instr  (instr)
     );
@@ -129,26 +130,38 @@ module core #(
     always @(posedge clk) begin
         if (!rst_n) begin
             if_id_pc    <= 32'b0;
-            if_id_instr <= 32'h00000013; 
+            //if_id_instr <= 32'h00000013; 
         end else if (flush) begin
             if_id_pc    <= pc;
-            if_id_instr <= 32'h00000013;   // addi x0,x0,0 -- a real nop
+            //if_id_instr <= 32'h00000013;   // addi x0,x0,0 -- a real nop
         end else if (load_use)begin
             if_id_pc    <= if_id_pc; // hold
-            if_id_instr <= if_id_instr;
+            //if_id_instr <= if_id_instr;
         end else begin
             if_id_pc    <= pc;
-            if_id_instr <= instr;
+            //if_id_instr <= instr;
         end
     end
 
+    //sync read fixes
+
+    reg if_id_valid;
+
+    always @(posedge clk) begin
+        if (!rst_n)        if_id_valid <= 1'b0;
+        else if (flush)    if_id_valid <= 1'b0;
+        else if (load_use) if_id_valid <= if_id_valid;
+        else               if_id_valid <= 1'b1;
+    end
+
+    wire [31:0] id_instr = if_id_valid ? instr : 32'h00000013;
 
 // ====================================================================
 // ID -- decode and register read
 // ====================================================================
 
     decoder u_decoder (
-        .instr       (if_id_instr),
+        .instr       (id_instr),
         .rs1_addr    (rs1_addr),
         .rs2_addr    (rs2_addr),
         .rd_addr     (rd_addr),
@@ -174,7 +187,7 @@ module core #(
     );
 
     immgen u_immgen (
-        .instr  (if_id_instr),
+        .instr  (id_instr),
         .imm    (imm)
     );
 
@@ -228,7 +241,7 @@ module core #(
         end else begin
             id_ex_pc          <= if_id_pc;
             id_ex_pc_plus4    <= if_id_pc + 32'd4;
-            id_ex_instr       <= if_id_instr;
+            id_ex_instr       <= id_instr;
 
             id_ex_rs1_data    <= rs1_data;
             id_ex_rs2_data    <= rs2_data;
