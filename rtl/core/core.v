@@ -94,7 +94,7 @@ module core #(
     wire [31:0] mem_rdata;
 
     // ---- MEM/WB --------------------------------------------------
-    reg  [31:0] mem_wb_alu_result, mem_wb_mem_rdata, mem_wb_pc_plus4;
+    reg  [31:0] mem_wb_alu_result, mem_wb_pc_plus4;
     reg  [31:0] mem_wb_csr_rdata;
     reg  [4:0]  mem_wb_rd_addr;
     reg         mem_wb_reg_we;
@@ -399,6 +399,7 @@ module core #(
 
     dmem #(.INIT_FILE(DMEM_INIT)) u_dmem (
         .clk    (clk),
+        .en    (!load_use),
         .addr   (ex_mem_alu_result),
         .wdata  (ex_mem_rs2_data),
         .funct3 (ex_mem_funct3),
@@ -414,7 +415,6 @@ module core #(
             mem_wb_reg_we     <= ex_mem_reg_we;
 
             mem_wb_alu_result <= ex_mem_alu_result;
-            mem_wb_mem_rdata  <= mem_rdata;
             mem_wb_pc_plus4   <= ex_mem_pc_plus4;
             mem_wb_csr_rdata  <= ex_mem_csr_rdata;
 
@@ -433,7 +433,7 @@ module core #(
 
     assign wb_data = (mem_wb_wb_sel == 2'b11) ? mem_wb_csr_rdata :
                      (mem_wb_wb_sel == 2'b10) ? mem_wb_pc_plus4  :
-                     (mem_wb_wb_sel == 2'b01) ? mem_wb_mem_rdata
+                     (mem_wb_wb_sel == 2'b01) ? mem_rdata 
                                               : mem_wb_alu_result;
 
 

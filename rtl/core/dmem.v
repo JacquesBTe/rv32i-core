@@ -3,7 +3,8 @@
 module dmem #(
     parameter INIT_FILE = ""
 ) (
-    input  wire        clk,
+    input wire clk,
+    input wire en,
     /* verilator lint_off UNUSEDSIGNAL */
     input  wire [31:0] addr,
     /* verilator lint_on UNUSEDSIGNAL */
@@ -18,11 +19,22 @@ module dmem #(
 
     reg [31:0] mem[0:16383]; //memory array -- 64KB of memory
 
-
     //address decompostion
     wire [13:0] word_idx = addr[15:2]; //dropping the first two bits, is dividing by 4, byte 8 becomes word 2. 
     wire [1:0]  lane     = addr[1:0]; //remainder of mod 4
     wire [4:0]  shift    = lane << 3;   // lane * 8, each lane is 8 bits. 
+
+    reg  [31:0] word;
+    reg  [1:0]  lane_q;
+    reg  [2:0]  funct3_q;
+
+    //connect to convert to sync read
+
+    always @(posedge clk) if (en) begin
+        word     <= mem[word_idx];
+        lane_q   <= lane;
+        funct3_q <= funct3;
+    end
 
     // ---- store -----------------------------------------------------
     reg [3:0] wstrb; //word strobe, allows use to know how many lanes to activat when writing
@@ -47,12 +59,13 @@ module dmem #(
     end
 
     // ---- load ------------------------------------------------------
-    wire [31:0] word    = mem[word_idx];
+    wire [4:0] shift_q = {lane_q, 3'b000};
+
     /* verilator lint_off UNUSEDSIGNAL */
-    wire [31:0] shifted = word >> shift;
+    wire [31:0] shifted = word >> shift_q;
     /* verilator lint_on UNUSEDSIGNAL */
     always @(*) begin
-        case (funct3)
+        case (funct3_q)
             3'b000:  rdata = {{24{shifted[7]}}, shifted[7:0]};   // lb
             3'b001:  rdata = {{16{shifted[15]}}, shifted[15:0]};   // lh
             3'b010:  rdata = word;                                 // lw
