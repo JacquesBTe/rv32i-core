@@ -2,8 +2,8 @@
 `include "rv32i_defs.vh"
 
 module core #(
-    parameter IMEM_INIT = "rv32ui-p-add.hex",
-    parameter DMEM_INIT = "",
+    parameter IMEM_INIT = "C:/dev/rv32i-core/sim/waves/count.hex",
+    parameter DMEM_INIT = "C:/dev/rv32i-core/sim/waves/count.hex",
     parameter RESET_PC  = 32'h80000000
 ) (
     input  wire        clk,
