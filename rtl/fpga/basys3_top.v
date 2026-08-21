@@ -22,8 +22,8 @@ module basys3_top (
     wire [31:0] trace_pc;
 
     core #(
-        .IMEM_INIT ("count.hex"),
-        .DMEM_INIT ("count.hex")
+        .IMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/rv32ui-p-add.hex"),
+        .DMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/rv32ui-p-add.hex")
     ) u_core (
         .clk      (clk),
         .rst_n    (rst_n),

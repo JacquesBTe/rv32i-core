@@ -109,12 +109,17 @@ module core #(
 // IF -- instruction fetch
 // ====================================================================
 
+    wire load_use = id_ex_mem_re
+                && (id_ex_rd_addr != 5'b0)
+                && ((id_ex_rd_addr == rs1_addr) || (id_ex_rd_addr == rs2_addr));
+
     imem #(.INIT_FILE(IMEM_INIT)) u_imem (
         .clk(clk),
         .en(!load_use), 
         .addr   (pc),
         .instr  (instr)
     );
+
 
     assign pc_next = pc_redirect ? pc_target : pc_plus4;
 
@@ -203,9 +208,6 @@ module core #(
         .rd_we      (mem_wb_reg_we)
     );
 
-    wire load_use = id_ex_mem_re
-                && (id_ex_rd_addr != 5'b0)
-                && ((id_ex_rd_addr == rs1_addr) || (id_ex_rd_addr == rs2_addr));
 
     // ---- ID/EX register ----
     always @(posedge clk) begin
@@ -285,6 +287,11 @@ module core #(
     //Forwarding
     // Three terms, same shape as the regfile bypass: the source stage
     // writes a register, its rd matches the reader's rs, and it isn't x0.
+
+    //forwarding mux
+    wire [31:0] ex_mem_wb_value = (ex_mem_wb_sel == 2'b11) ? ex_mem_csr_rdata : //if CSR read, CSR data
+                                  (ex_mem_wb_sel == 2'b10) ? ex_mem_pc_plus4  : //if jal or jalr, return address PC +4
+                                                             ex_mem_alu_result; //else ALU result
     
     //forward operand a, from MEM
     wire fwd_a_mem = ex_mem_reg_we && (ex_mem_rd_addr == id_ex_rs1_addr) //the instr in MEM is going to write a reg 
@@ -362,12 +369,6 @@ module core #(
         .mtvec_out   (mtvec_out),
         .mepc_out    (mepc_out)
     );
-
-    //forwarding mux
-    wire [31:0] ex_mem_wb_value = (ex_mem_wb_sel == 2'b11) ? ex_mem_csr_rdata : //if CSR read, CSR data
-                                  (ex_mem_wb_sel == 2'b10) ? ex_mem_pc_plus4  : //if jal or jalr, return address PC +4
-                                                             ex_mem_alu_result; //else ALU result
-
                                                             
     // ---- EX/MEM register ----
     always @(posedge clk) begin
