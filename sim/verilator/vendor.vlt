@@ -1,0 +1,13 @@
+// sim/verilator/vendor.vlt ----------------------------------------------------
+// Lint waivers for third-party code in rtl/vendor/. That code isn't ours to
+// edit, so warnings from it are suppressed here rather than inline.
+`verilator_config
+
+lint_off -rule TIMESCALEMOD -file "*/rtl/vendor/*"
+lint_off -rule WIDTHTRUNC   -file "*/rtl/vendor/*"
+lint_off -rule WIDTHEXPAND  -file "*/rtl/vendor/*"
+lint_off -rule UNUSEDSIGNAL -file "*/rtl/vendor/*"
+lint_off -rule UNUSEDPARAM  -file "*/rtl/vendor/*"
+lint_off -rule PROCASSINIT  -file "*/rtl/vendor/*"
+lint_off -rule DECLFILENAME -file "*/rtl/vendor/*"
+lint_off -rule PINCONNECTEMPTY -file "*/rtl/vendor/*"

@@ -23,6 +23,9 @@ CORE_SRCS := $(RTL)/core/core.v $(RTL)/core/regfile.v $(RTL)/core/alu.v \
 # rtl/core and rtl/soc for <MODULE>.v.
 RTL_selftest := $(TB_DIR)/selftest/selftest.v
 RTL_core     := $(CORE_SRCS)
+RTL_gpio     := $(RTL)/soc/gpio.v $(VENDOR_AXI)/axil_reg_if.v \
+                $(VENDOR_AXI)/axil_reg_if_wr.v $(VENDOR_AXI)/axil_reg_if_rd.v \
+                $(VLT_CFG)
 RTL_soc      := $(RTL)/soc/soc.v $(RTL)/soc/axil_master.v $(RTL)/soc/gpio.v \
                 $(RTL)/soc/uart_axil.v $(RTL)/soc/timer.v \
                 $(CORE_SRCS) $(VENDOR_AXI_SRCS) \
@@ -36,7 +39,8 @@ RTL_SRCS = $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),\
 TB_SRC := $(TB_DIR)/tb_$(MODULE).cpp
 EXE    := $(OBJ)/V$(MODULE)
 
-MODULES := regfile alu immgen decoder imem dmem branch_cmp csr core
+MODULES := regfile alu immgen decoder imem dmem branch_cmp csr core \
+           axil_master gpio
 
 VFLAGS := --cc --exe --build -j 0 \
           --top-module $(MODULE) \
@@ -63,7 +67,7 @@ waves: run
 	gtkwave $(WAVE_D)/$(MODULE).fst $(wildcard $(WAVE_D)/$(MODULE).gtkw) &
 
 lint:
-	verilator --lint-only -Wall -I$(RTL)/include \
+	verilator --lint-only -Wall -I$(RTL)/include --timescale 1ns/1ps \
 	          --top-module $(MODULE) $(RTL_SRCS)
 
 test-all:
