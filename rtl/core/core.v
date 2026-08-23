@@ -9,6 +9,11 @@ module core #(
     input  wire        clk,
     input  wire        rst_n,
 
+    // A slave may hold READY low for an unbounded number of cycles; while
+    // high, a bus transaction is physically in flight and every pipeline
+    // register must freeze, not just the ones downstream of MEM.
+    input  wire        bus_stall,
+
     // trace outputs -- for the phase 0 trace_diff harness
     output wire [31:0] trace_pc,
     output wire [31:0] trace_instr,
@@ -115,7 +120,7 @@ module core #(
 
     imem #(.INIT_FILE(IMEM_INIT)) u_imem (
         .clk(clk),
-        .en(!load_use), 
+        .en(!(load_use || bus_stall)),
         .addr   (pc),
         .instr  (instr)
     );
@@ -125,6 +130,7 @@ module core #(
 
     always @(posedge clk) begin
         if (!rst_n) pc <= RESET_PC;
+        else if (bus_stall) pc <= pc; //hold -- transaction in flight
         else if (load_use) pc <= pc; //hold
         else        pc <= pc_next;
     end
@@ -135,7 +141,9 @@ module core #(
     always @(posedge clk) begin
         if (!rst_n) begin
             if_id_pc    <= 32'b0;
-            //if_id_instr <= 32'h00000013; 
+            //if_id_instr <= 32'h00000013;
+        end else if (bus_stall) begin
+            if_id_pc    <= if_id_pc; // hold -- transaction in flight
         end else if (flush) begin
             if_id_pc    <= pc;
             //if_id_instr <= 32'h00000013;   // addi x0,x0,0 -- a real nop
@@ -153,10 +161,11 @@ module core #(
     reg if_id_valid;
 
     always @(posedge clk) begin
-        if (!rst_n)        if_id_valid <= 1'b0;
-        else if (flush)    if_id_valid <= 1'b0;
-        else if (load_use) if_id_valid <= if_id_valid;
-        else               if_id_valid <= 1'b1;
+        if (!rst_n)          if_id_valid <= 1'b0;
+        else if (bus_stall)  if_id_valid <= if_id_valid;  // hold
+        else if (flush)      if_id_valid <= 1'b0;
+        else if (load_use)   if_id_valid <= if_id_valid;
+        else                 if_id_valid <= 1'b1;
     end
 
     wire [31:0] id_instr = if_id_valid ? instr : 32'h00000013;
@@ -222,7 +231,9 @@ module core #(
             id_ex_is_ecall  <= 1'b0;
             id_ex_csr_re    <= 1'b0;
             id_ex_csr_we    <= 1'b0;
-         end else if (flush || load_use) begin
+        end else if (bus_stall) begin
+            // hold -- transaction in flight downstream
+        end else if (flush || load_use) begin
             id_ex_pc          <= 32'b0;
             id_ex_pc_plus4    <= 32'b0;
             id_ex_instr       <= 32'h00000013;
@@ -375,6 +386,10 @@ module core #(
         if (!rst_n) begin
             ex_mem_reg_we <= 1'b0;
             ex_mem_mem_we <= 1'b0;
+        end else if (bus_stall) begin
+            // hold -- keeps addr/wdata/funct3 stable for the whole
+            // transaction, since axil_master reads them straight from
+            // this register with no registered copy of its own
         end else begin
             ex_mem_reg_we     <= reg_we_final;
             ex_mem_mem_we     <= mem_we_final;
@@ -400,7 +415,7 @@ module core #(
 
     dmem #(.INIT_FILE(DMEM_INIT)) u_dmem (
         .clk    (clk),
-        .en    (!load_use),
+        .en    (!(load_use || bus_stall)),
         .addr   (ex_mem_alu_result),
         .wdata  (ex_mem_rs2_data),
         .funct3 (ex_mem_funct3),
@@ -412,6 +427,9 @@ module core #(
     always @(posedge clk) begin
         if (!rst_n) begin
             mem_wb_reg_we <= 1'b0;
+        end else if (bus_stall) begin
+            // hold -- this is what stops the stalled MEM instruction from
+            // being written back once per stall cycle instead of once
         end else begin
             mem_wb_reg_we     <= ex_mem_reg_we;
 

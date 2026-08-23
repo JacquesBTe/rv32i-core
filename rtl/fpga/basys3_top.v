@@ -35,6 +35,7 @@ module basys3_top (
     ) u_core (
         .clk      (cpu_clk),
         .rst_n    (rst_n),
+        .bus_stall(1'b0),
         .trace_pc (trace_pc),
         .trace_wdata (trace_wdata)
     );
