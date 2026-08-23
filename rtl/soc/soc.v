@@ -1,10 +1,11 @@
 `default_nettype none
 
-// Phase 5 SoC: core + AXI4-Lite bus + dmem + gpio.
+// Phase 5 SoC: core + AXI4-Lite bus + dmem + gpio + uart.
 //
 // Memory map:
 //   0x8000_0000  dmem  (64 KB, addr[31] == 1)
 //   0x1000_0000  gpio  (4 KB peripheral window)
+//   0x1000_1000  uart  (4 KB peripheral window)
 
 module soc #(
     parameter IMEM_INIT = "",
@@ -16,6 +17,9 @@ module soc #(
 
     output wire [15:0] led,
     input  wire [15:0] sw,
+
+    output wire        uart_txd,
+    input  wire        uart_rxd,
 
     // trace outputs -- passthrough from core, for the phase 0 trace_diff
     // harness and tb_soc
@@ -104,22 +108,25 @@ module soc #(
         .m_axil_rready  (m_rready)
     );
 
-    // ---- interconnect: 1 master -> {dmem, gpio} -------------------
+    // ---- interconnect: 1 master -> {dmem, gpio, uart} --------------
     // Index 0 = dmem @ 0x8000_0000, 64 KB window.
     // Index 1 = gpio @ 0x1000_0000, 4 KB window.
-    localparam [2*32-1:0] IC_BASE_ADDR  = {32'h1000_0000, 32'h8000_0000};
-    localparam [2*32-1:0] IC_ADDR_WIDTH = {32'd12,        32'd16};
+    // Index 2 = uart @ 0x1000_1000, 4 KB window.
+    localparam [3*32-1:0] IC_BASE_ADDR  =
+        {32'h1000_1000, 32'h1000_0000, 32'h8000_0000};
+    localparam [3*32-1:0] IC_ADDR_WIDTH =
+        {32'd12,        32'd12,        32'd16};
 
-    wire [63:0] ic_m_awaddr, ic_m_araddr, ic_m_wdata, ic_m_rdata;
-    wire [5:0]  ic_m_awprot, ic_m_arprot;
-    wire [7:0]  ic_m_wstrb;
-    wire [1:0]  ic_m_awvalid, ic_m_awready, ic_m_wvalid, ic_m_wready;
-    wire [1:0]  ic_m_bvalid, ic_m_bready, ic_m_arvalid, ic_m_arready;
-    wire [1:0]  ic_m_rvalid, ic_m_rready;
-    wire [3:0]  ic_m_bresp, ic_m_rresp;
+    wire [95:0] ic_m_awaddr, ic_m_araddr, ic_m_wdata, ic_m_rdata;
+    wire [8:0]  ic_m_awprot, ic_m_arprot;
+    wire [11:0] ic_m_wstrb;
+    wire [2:0]  ic_m_awvalid, ic_m_awready, ic_m_wvalid, ic_m_wready;
+    wire [2:0]  ic_m_bvalid, ic_m_bready, ic_m_arvalid, ic_m_arready;
+    wire [2:0]  ic_m_rvalid, ic_m_rready;
+    wire [5:0]  ic_m_bresp, ic_m_rresp;
 
     axil_interconnect #(
-        .S_COUNT(1), .M_COUNT(2),
+        .S_COUNT(1), .M_COUNT(3),
         .DATA_WIDTH(32), .ADDR_WIDTH(32), .STRB_WIDTH(4),
         .M_BASE_ADDR(IC_BASE_ADDR),
         .M_ADDR_WIDTH(IC_ADDR_WIDTH)
@@ -221,6 +228,35 @@ module soc #(
         .s_axil_rresp   (ic_m_rresp[3:2]),
         .s_axil_rvalid  (ic_m_rvalid[1]),
         .s_axil_rready  (ic_m_rready[1])
+    );
+
+    // ---- slave 2: uart -----------------------------------------------
+    uart_axil u_uart (
+        .clk   (clk),
+        .rst_n (rst_n),
+
+        .txd (uart_txd),
+        .rxd (uart_rxd),
+
+        .s_axil_awaddr  (ic_m_awaddr[95:64]),
+        .s_axil_awprot  (ic_m_awprot[8:6]),
+        .s_axil_awvalid (ic_m_awvalid[2]),
+        .s_axil_awready (ic_m_awready[2]),
+        .s_axil_wdata   (ic_m_wdata[95:64]),
+        .s_axil_wstrb   (ic_m_wstrb[11:8]),
+        .s_axil_wvalid  (ic_m_wvalid[2]),
+        .s_axil_wready  (ic_m_wready[2]),
+        .s_axil_bresp   (ic_m_bresp[5:4]),
+        .s_axil_bvalid  (ic_m_bvalid[2]),
+        .s_axil_bready  (ic_m_bready[2]),
+        .s_axil_araddr  (ic_m_araddr[95:64]),
+        .s_axil_arprot  (ic_m_arprot[8:6]),
+        .s_axil_arvalid (ic_m_arvalid[2]),
+        .s_axil_arready (ic_m_arready[2]),
+        .s_axil_rdata   (ic_m_rdata[95:64]),
+        .s_axil_rresp   (ic_m_rresp[5:4]),
+        .s_axil_rvalid  (ic_m_rvalid[2]),
+        .s_axil_rready  (ic_m_rready[2])
     );
 
 endmodule

@@ -4,7 +4,10 @@ module basys3_top (
     input  wire        clk,      // W5, 100 MHz
     input  wire        btnC,     // reset button, active high
     input  wire [15:0] sw,
-    output wire [15:0] led
+    output wire [15:0] led,
+
+    input  wire        RsRx,     // B18, USB-UART -> FPGA
+    output wire        RsTx      // A18, FPGA -> USB-UART
 );
 
     wire cpu_clk;
@@ -24,13 +27,15 @@ module basys3_top (
 
     // ---- soc ----
     soc #(
-        .IMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/gpio_loop.hex"),
-        .DMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/gpio_loop.hex")
+        .IMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/uart_hello.hex"),
+        .DMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/uart_hello.hex")
     ) u_soc (
-        .clk   (cpu_clk),
-        .rst_n (rst_n),
-        .led   (led),
-        .sw    (sw)
+        .clk      (cpu_clk),
+        .rst_n    (rst_n),
+        .led      (led),
+        .sw       (sw),
+        .uart_txd (RsTx),
+        .uart_rxd (RsRx)
     );
 
 endmodule

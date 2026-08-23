@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     FILE* csv = fopen(csv_path, "w");
     if (!csv) { printf("[tb] cannot open %s\n", csv_path); return 2; }
 
-    d.clk = 0; d.rst_n = 0; d.sw = 0;
+    d.clk = 0; d.rst_n = 0; d.sw = 0; d.uart_rxd = 1;   // idle-high
     tb.tick(); tb.tick();
     d.rst_n = 1;
 
