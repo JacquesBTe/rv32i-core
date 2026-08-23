@@ -50,8 +50,10 @@ static uint32_t enc_j(uint32_t op, uint32_t rd, int32_t imm) {
          | (rd << 7) | op;
 }
 
-// sign-extend the low n bits of v to 32
+// Sign-extend the low n bits of v to 32. v MUST be truncated to n bits
+// first -- the xor-minus trick only works on an n-bit value.
 static uint32_t sext(uint32_t v, int n) {
+    v &= (n >= 32) ? 0xFFFFFFFFu : ((1u << n) - 1u);
     uint32_t m = 1u << (n - 1);
     return (v ^ m) - m;
 }
@@ -66,16 +68,15 @@ int main(int argc, char** argv) {
         CHECK_EQ(d.imm, want);
     };
 
-    // ---- anchors: hand-verified against real encodings -----------------
+    // ---- anchors: hand-verified against real disassembly ---------------
+    // These do not use the encoders above, so they catch a bug that would
+    // otherwise be invisible: the encoder and the RTL being wrong in the
+    // same way.
     tb_begin("1. known instruction words");
     chk(0x02A08293, 42);            // addi x5, x1, 42
     chk(0xFFF08293, 0xFFFFFFFF);    // addi x5, x1, -1
-    // TODO: add two more from a .dis file you generated in phase 0 --
-    //       ideally one store and one branch, since those are the
-    //       formats your own encoder is most likely to get wrong.
-    chk(0xf5b50793, 0xFFFFFF5B); //addi	a5,a0,-165
-    chk(0x01010113, 16); //addi	sp,sp,16
-
+    chk(0xf5b50793, 0xFFFFFF5B);    // addi a5, a0, -165
+    chk(0x01010113, 16);            // addi sp, sp, 16
 
     tb_begin("2. I-type directed");
     chk(enc_i(OP_OPIMM, 5, 0, 1,     0), 0);
@@ -86,29 +87,28 @@ int main(int argc, char** argv) {
     tb_begin("3. S-type directed");
     chk(enc_s(OP_STORE, 2, 1, 2,     8), 8);
     chk(enc_s(OP_STORE, 2, 1, 2,    -8), 0xFFFFFFF8);
-    // TODO: 2047 and -2048
-
+    chk(enc_s(OP_STORE, 2, 1, 2,  2047), 2047);
+    chk(enc_s(OP_STORE, 2, 1, 2, -2048), 0xFFFFF800);
 
     tb_begin("4. B-type directed");
+    // Range is -4096 .. +4094: bit 0 is hardwired zero, so the largest
+    // positive value is even.
     chk(enc_b(OP_BRANCH, 0, 1, 2,     8), 8);
     chk(enc_b(OP_BRANCH, 0, 1, 2,    -8), 0xFFFFFFF8);
-    // TODO: 4094 (max positive) and -4096 (max negative)
-    chk(enc_b(OP_BRANCH, 0, 1, 2, 4094), 4094);
-    chk(enc_b(OP_BRANCH, 0, 1, 2, -4094), 0xFFFFF000);
+    chk(enc_b(OP_BRANCH, 0, 1, 2,  4094), 4094);
+    chk(enc_b(OP_BRANCH, 0, 1, 2, -4096), 0xFFFFF000);
 
     tb_begin("5. U-type directed");
     chk(enc_u(OP_LUI,   5, 0x12345000), 0x12345000);
     chk(enc_u(OP_AUIPC, 5, 0xFFFFF000), 0xFFFFF000);   // no sign extension
-    // TODO: 0 and 0x00001000
     chk(enc_u(OP_LUI,   5, 0x00000000), 0x00000000);
     chk(enc_u(OP_LUI,   5, 0x00001000), 0x00001000);
 
     tb_begin("6. J-type directed");
-    chk(enc_j(OP_JAL, 1,     8), 8);
-    chk(enc_j(OP_JAL, 1,    -8), 0xFFFFFFF8);
-    // TODO: 1048574 (max positive) and -1048576 (max negative)
-    chk(enc_j(OP_JAL, 1,  1048574), 0x000FFFFE);   // max positive
-    chk(enc_j(OP_JAL, 1, -1048576), 0xFFF00000);   // max negative
+    chk(enc_j(OP_JAL, 1,        8), 8);
+    chk(enc_j(OP_JAL, 1,       -8), 0xFFFFFFF8);
+    chk(enc_j(OP_JAL, 1,  1048574), 0x000FFFFE);       // max positive
+    chk(enc_j(OP_JAL, 1, -1048576), 0xFFF00000);       // max negative
 
     tb_begin("7. R-type has no immediate");
     chk((0b0110011) | (5 << 7) | (1 << 15) | (2 << 20), 0);

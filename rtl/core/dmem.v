@@ -32,13 +32,16 @@ module dmem #(
         if (wstrb[3]) mem[word_idx][31:24] <= wdata[31:24];
     end
 
-    // dmem.v
+    // synthesis translate_off
     string hexfile;
+    // synthesis translate_on
+
     initial begin
-        if ($value$plusargs("dmem=%s", hexfile))
-            $readmemh(hexfile, mem);
-        else if (INIT_FILE != "")
-            $readmemh(INIT_FILE, mem);
+        // synthesis translate_off
+        if ($value$plusargs("dmem=%s", hexfile)) $readmemh(hexfile, mem);
+        else
+        // synthesis translate_on
+        if (INIT_FILE != "") $readmemh(INIT_FILE, mem);
     end
 
 endmodule

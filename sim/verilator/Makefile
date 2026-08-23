@@ -42,8 +42,10 @@ RTL_SRCS = $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),\
 TB_SRC := $(TB_DIR)/tb_$(MODULE).cpp
 EXE    := $(OBJ)/V$(MODULE)
 
+# soc is deliberately absent: it has no standalone program to run, and its
+# verification is tests/run_tests.sh, which drives it with +imem=/+dmem=.
 MODULES := regfile alu immgen decoder imem dmem branch_cmp csr \
-           axil_master gpio axil_mem soc
+           axil_master axil_mem gpio
 
 VFLAGS := --cc --exe --build -j 0 \
           --top-module $(MODULE) \
@@ -78,10 +80,12 @@ test-all:
 	   echo "=== $$m ==="; $(MAKE) --no-print-directory MODULE=$$m run || exit 1; \
 	 done
 	@echo "ALL MODULES PASS"
+	@echo "note: soc is covered by tests/run_tests.sh, not test-all"
 
 clean:
 	rm -rf $(TB_DIR)/obj_dir $(WAVE_D)/*.fst $(WAVE_D)/*.vcd
 
 help:
 	@echo "make [run|waves|lint|clean] MODULE=<name>   TBARGS='+seed=1234'"
-	@echo "make test-all"
+	@echo "make test-all        -- unit tests"
+	@echo "../../tests/run_tests.sh  -- full riscv-tests sweep (soc)"
