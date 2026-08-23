@@ -16,7 +16,13 @@ for elf in "$ISA"/rv32ui-p-*; do
     riscv-none-elf-objcopy -O binary "$elf" "$WAVES/$name.bin"
     python3 "$MAKEHEX" "$WAVES/$name.bin" > "$WAVES/$name.hex"
 
-    out=$(cd "$WAVES" && "$EXE" "+imem=$name.hex" "+dmem=$name.hex" "+trace=$name.csv" 2>&1)
+    # tohost usually sits at 0x80001000, but a test with enough .data ahead
+    # of it (ld_st's scratch buffer) pushes it further out -- read the real
+    # address out of the ELF instead of assuming.
+    tohost=$(riscv-none-elf-nm "$elf" | awk '$3 == "tohost" {print "0x"$1}')
+
+    out=$(cd "$WAVES" && "$EXE" "+imem=$name.hex" "+dmem=$name.hex" \
+              "+trace=$name.csv" "+tohost=$tohost" 2>&1)
 
     if echo "$out" | grep -q "PASS via tohost"; then
         printf "  PASS  %s\n" "$name"

@@ -5,13 +5,21 @@
 // riscv-tests HTIF exit protocol: the program stores a nonzero word to
 // 'tohost'. Value 1 means pass; otherwise (code << 1) | 1, so the failing
 // test number is value >> 1.
-static const uint32_t TOHOST_ADDR = 0x80001000;
-static const int      MAX_CYCLES  = 200000;
+//
+// tohost's address isn't fixed across every test binary -- most place it
+// at 0x80001000, but a test with enough .data ahead of it (ld_st's scratch
+// buffer for its pointer round-trip checks) pushes it further out, to
+// 0x80002000. +tohost=<hex> overrides the default for those.
+static uint32_t TOHOST_ADDR = 0x80001000;
+static const int MAX_CYCLES = 200000;
 
 int main(int argc, char** argv) {
     const char* csv_path = "soc_trace.csv";
-    for (int i = 1; i < argc; i++)
+    for (int i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "+trace=", 7)) csv_path = argv[i] + 7;
+        if (!strncmp(argv[i], "+tohost=", 8))
+            TOHOST_ADDR = strtoul(argv[i] + 8, nullptr, 0);
+    }
 
     Tb<Vsoc> tb(argc, argv, "soc");
     auto& d = tb.dut;

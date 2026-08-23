@@ -21,6 +21,9 @@ module core #(
     output wire        mem_we,
     input  wire [31:0] mem_rdata,
 
+    // timer interrupt line from the SoC, wired straight to mip.MTIP
+    input  wire        timer_irq,
+
     // trace outputs -- for the phase 0 trace_diff harness
     output wire [31:0] trace_pc,
     output wire [31:0] trace_instr,
@@ -92,6 +95,7 @@ module core #(
     wire [31:0] csr_rdata;
     wire        csr_illegal;
     wire [31:0] mtvec_out, mepc_out;
+    wire        priv_m_out;
 
     // ---- EX/MEM --------------------------------------------------
     reg  [31:0] ex_mem_alu_result, ex_mem_rs2_data, ex_mem_pc_plus4;
@@ -363,7 +367,11 @@ module core #(
                                               : fwd_rs1;
 
     assign trap       = id_ex_illegal || csr_illegal || id_ex_is_ecall;
-    assign trap_cause = id_ex_is_ecall ? 32'd11 : 32'd2;
+    // ecall's cause depends on the privilege mode it's called from --
+    // 11 from M-mode, 8 from U-mode (Spike's convention, and what the
+    // ld_st riscv-test expects).
+    assign trap_cause = id_ex_is_ecall ? (priv_m_out ? 32'd11 : 32'd8)
+                                        : 32'd2;
 
     // A faulting instruction must have no side effects.
     wire reg_we_final = id_ex_reg_we && !trap;
@@ -372,6 +380,7 @@ module core #(
     csr u_csr (
         .clk         (clk),
         .rst_n       (rst_n),
+        .bus_stall   (bus_stall),
         .csr_addr    (id_ex_instr[31:20]),
         .csr_wdata   (csr_wdata),
         .csr_op      (id_ex_csr_op),
@@ -382,8 +391,11 @@ module core #(
         .trap        (trap),
         .trap_pc     (id_ex_pc),
         .trap_cause  (trap_cause),
+        .is_mret     (id_ex_is_mret),
+        .timer_irq   (timer_irq),
         .mtvec_out   (mtvec_out),
-        .mepc_out    (mepc_out)
+        .mepc_out    (mepc_out),
+        .priv_m_out  (priv_m_out)
     );
                                                             
     // ---- EX/MEM register ----

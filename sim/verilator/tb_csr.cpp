@@ -30,10 +30,11 @@ int main(int argc, char** argv) {
     auto& d = tb.dut;
 
     // idle state
-    d.clk = 0; d.rst_n = 0;
+    d.clk = 0; d.rst_n = 0; d.bus_stall = 0;
     d.csr_addr = 0; d.csr_wdata = 0; d.csr_op = OP_NONE;
     d.csr_re = 0; d.csr_we = 0;
     d.trap = 0; d.trap_pc = 0; d.trap_cause = 0;
+    d.is_mret = 0; d.timer_irq = 0;
     tb.tick(); tb.tick();
     d.rst_n = 1;
     tb.tick();
@@ -77,6 +78,9 @@ int main(int argc, char** argv) {
     CHECK_EQ(rd(CSR_MSCRATCH), 0);
     CHECK_EQ(rd(CSR_MEPC),     0);
     CHECK_EQ(rd(CSR_MCAUSE),   0);
+    CHECK_EQ(rd(CSR_MIE),      0);
+    CHECK_EQ(rd(CSR_MIP),      0);
+    CHECK_EQ(d.priv_m_out,     1);   // reset in M-mode
 
     tb_begin("2. csrrw -- write then read back");
     access(CSR_MSCRATCH, OP_RW, 0xDEADBEEF, true, true);
@@ -120,8 +124,10 @@ int main(int argc, char** argv) {
 
     tb_begin("7. recognised-but-ignored CSRs accept writes, read zero");
     // riscv-tests init writes all of these; trapping would derail it.
-    const uint32_t ignored[] = {CSR_MISA, CSR_MEDELEG, CSR_MIDELEG, CSR_MIE,
-                                CSR_MTVAL, CSR_MIP, CSR_SATP,
+    // mie and mip are excluded here -- both are now real registers with
+    // their own semantics, tested separately below.
+    const uint32_t ignored[] = {CSR_MISA, CSR_MEDELEG, CSR_MIDELEG,
+                                CSR_MTVAL, CSR_SATP,
                                 CSR_PMPCFG0, CSR_PMPADDR0};
     for (uint32_t a : ignored) {
         CHECK_EQ(illegal(a, OP_RW, true, true), false);
@@ -169,16 +175,91 @@ int main(int argc, char** argv) {
     CHECK_EQ(d.mtvec_out, 0x80001000);
     CHECK_EQ(d.mepc_out,  0x80002000);
 
-    tb_begin("13. random read/write against a shadow model");
-    // Only the five writable registers; mhartid and the ignored list have
-    // their own sections above.
-    const uint32_t rw[] = {CSR_MSTATUS, CSR_MTVEC, CSR_MSCRATCH,
-                           CSR_MEPC, CSR_MCAUSE};
-    uint32_t model[5];
-    for (int i = 0; i < 5; i++) model[i] = rd(rw[i]);
+    tb_begin("13. mie: only bit 7 (MTIE) is real, rest read zero");
+    access(CSR_MIE, OP_RW, 0xFFFFFFFF, true, true);
+    CHECK_EQ(rd(CSR_MIE), 0x00000080u);
+    access(CSR_MIE, OP_RW, 0x00000000, true, true);
+    CHECK_EQ(rd(CSR_MIE), 0x00000000u);
+    CHECK_EQ(illegal(CSR_MIE, OP_RW, true, true), false);
+
+    tb_begin("14. mip: bit 7 mirrors timer_irq live, writes are dropped");
+    CHECK_EQ(rd(CSR_MIP), 0x00000000u);
+    d.timer_irq = 1;
+    CHECK_EQ(rd(CSR_MIP), 0x00000080u);
+    access(CSR_MIP, OP_RW, 0x00000000, true, true);   // try to clear MTIP directly
+    CHECK_EQ(rd(CSR_MIP), 0x00000080u);                // still set -- write dropped
+    d.timer_irq = 0;
+    CHECK_EQ(rd(CSR_MIP), 0x00000000u);
+    CHECK_EQ(illegal(CSR_MIP, OP_RW, true, true), false);
+
+    tb_begin("15. mstatus: only MIE(3)/MPIE(7)/MPP(12:11) are real");
+    access(CSR_MSTATUS, OP_RW, 0xFFFFFFFF, true, true);
+    CHECK_EQ(rd(CSR_MSTATUS), (uint32_t)((0x3u << 11) | (1u << 7) | (1u << 3)));
+    access(CSR_MSTATUS, OP_RW, 0x00000000, true, true);
+    CHECK_EQ(rd(CSR_MSTATUS), 0u);
+    access(CSR_MSTATUS, OP_RW, (1u << 3), true, true);       // just MIE
+    CHECK_EQ(rd(CSR_MSTATUS), (1u << 3));
+    access(CSR_MSTATUS, OP_RS, (1u << 7), true, true);       // csrrs adds MPIE
+    CHECK_EQ(rd(CSR_MSTATUS), (1u << 3) | (1u << 7));
+
+    auto do_mret = [&]() { d.is_mret = 1; tb.tick(); d.is_mret = 0; };
+    auto do_trap = [&](uint32_t pc, uint32_t cause) {
+        d.trap = 1; d.trap_pc = pc; d.trap_cause = cause;
+        tb.tick();
+        d.trap = 0;
+    };
+
+    tb_begin("16. trap entry: MIE->MPIE, MIE<-0, MPP<-priv, priv<-M");
+    access(CSR_MSTATUS, OP_RW, 0, true, true);
+    access(CSR_MSTATUS, OP_RS, (1u << 3), true, true);   // MIE = 1
+    CHECK_EQ(d.priv_m_out, 1);                           // reset state is M-mode
+    do_trap(0x80000010, 7);
+    CHECK_EQ(rd(CSR_MSTATUS) & (1u << 7), (1u << 7));    // MPIE == old MIE (1)
+    CHECK_EQ(rd(CSR_MSTATUS) & (1u << 3), 0u);           // MIE cleared
+    CHECK_EQ((rd(CSR_MSTATUS) >> 11) & 0x3, 0x3u);       // MPP == M (mode before trap)
+    CHECK_EQ(d.priv_m_out, 1);                           // traps always land in M
+
+    tb_begin("17. mret: MIE<-MPIE, MPIE<-1, MPP<-U, priv<-MPP");
+    do_mret();
+    CHECK_EQ(rd(CSR_MSTATUS) & (1u << 3), (1u << 3));    // MIE restored from MPIE (1)
+    CHECK_EQ(rd(CSR_MSTATUS) & (1u << 7), (1u << 7));    // MPIE set to 1 per spec
+    CHECK_EQ((rd(CSR_MSTATUS) >> 11) & 0x3, 0x0u);       // MPP dropped to U
+    CHECK_EQ(d.priv_m_out, 1);                           // MPP was M going into mret
+
+    tb_begin("18. dropping to U-mode via MPP, trap records the pre-trap mode");
+    access(CSR_MSTATUS, OP_RC, (0x3u << 11), true, true);  // clear MPP -> U
+    do_mret();
+    CHECK_EQ(d.priv_m_out, 0);                            // now in U-mode
+    do_trap(0x80000020, 8);
+    CHECK_EQ(d.priv_m_out, 1);                            // trap always enters M
+    CHECK_EQ((rd(CSR_MSTATUS) >> 11) & 0x3, 0x0u);        // MPP recorded U
+
+    tb_begin("19. bus_stall holds mret's effect -- it fires exactly once");
+    // MIE=1, MPIE=0, MPP=M going in. If the mret swap weren't held during
+    // bus_stall it would re-apply itself every held cycle using its own
+    // just-written output as input, converging on the wrong answer.
+    access(CSR_MSTATUS, OP_RW, (1u << 3) | (0x3u << 11), true, true);
+    CHECK_EQ(d.priv_m_out, 1);
+    d.is_mret = 1;
+    d.bus_stall = 1;
+    for (int i = 0; i < 5; i++) tb.tick();
+    d.bus_stall = 0;
+    tb.tick();
+    d.is_mret = 0;
+    CHECK_EQ(rd(CSR_MSTATUS) & (1u << 3), 0u);            // MIE <- old MPIE (0)
+    CHECK_EQ(rd(CSR_MSTATUS) & (1u << 7), (1u << 7));     // MPIE <- 1
+    CHECK_EQ((rd(CSR_MSTATUS) >> 11) & 0x3, 0x0u);        // MPP <- U
+    CHECK_EQ(d.priv_m_out, 1);                            // priv <- old MPP (M)
+
+    tb_begin("20. random read/write against a shadow model");
+    // mstatus/mie/mip have their own WARL semantics tested above; this
+    // covers the four remaining plain full-width registers.
+    const uint32_t rw[] = {CSR_MTVEC, CSR_MSCRATCH, CSR_MEPC, CSR_MCAUSE};
+    uint32_t model[4];
+    for (int i = 0; i < 4; i++) model[i] = rd(rw[i]);
 
     for (int i = 0; i < 5000; i++) {
-        int      k = tb.rnd(0, 4);
+        int      k = tb.rnd(0, 3);
         uint32_t v = tb.rnd();
         uint32_t op = OP_RW + tb.rnd(0, 2);        // 01, 10 or 11
 

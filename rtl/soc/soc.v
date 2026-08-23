@@ -1,11 +1,12 @@
 `default_nettype none
 
-// Phase 5 SoC: core + AXI4-Lite bus + dmem + gpio + uart.
+// Phase 5 SoC: core + AXI4-Lite bus + dmem + gpio + uart + timer.
 //
 // Memory map:
-//   0x8000_0000  dmem  (64 KB, addr[31] == 1)
-//   0x1000_0000  gpio  (4 KB peripheral window)
-//   0x1000_1000  uart  (4 KB peripheral window)
+//   0x8000_0000  dmem   (64 KB, addr[31] == 1)
+//   0x1000_0000  gpio   (4 KB peripheral window)
+//   0x1000_1000  uart   (4 KB peripheral window)
+//   0x1000_2000  timer  (4 KB peripheral window)
 
 module soc #(
     parameter IMEM_INIT = "",
@@ -40,6 +41,7 @@ module soc #(
     wire [31:0] mem_addr, mem_wdata, mem_rdata;
     wire [2:0]  mem_funct3;
     wire        mem_re, mem_we, bus_stall;
+    wire        timer_irq;
 
     core #(
         .IMEM_INIT (IMEM_INIT),
@@ -55,6 +57,8 @@ module soc #(
         .mem_re     (mem_re),
         .mem_we     (mem_we),
         .mem_rdata  (mem_rdata),
+
+        .timer_irq (timer_irq),
 
         .trace_pc        (trace_pc),
         .trace_instr     (trace_instr),
@@ -108,25 +112,26 @@ module soc #(
         .m_axil_rready  (m_rready)
     );
 
-    // ---- interconnect: 1 master -> {dmem, gpio, uart} --------------
-    // Index 0 = dmem @ 0x8000_0000, 64 KB window.
-    // Index 1 = gpio @ 0x1000_0000, 4 KB window.
-    // Index 2 = uart @ 0x1000_1000, 4 KB window.
-    localparam [3*32-1:0] IC_BASE_ADDR  =
-        {32'h1000_1000, 32'h1000_0000, 32'h8000_0000};
-    localparam [3*32-1:0] IC_ADDR_WIDTH =
-        {32'd12,        32'd12,        32'd16};
+    // ---- interconnect: 1 master -> {dmem, gpio, uart, timer} -------
+    // Index 0 = dmem  @ 0x8000_0000, 64 KB window.
+    // Index 1 = gpio  @ 0x1000_0000, 4 KB window.
+    // Index 2 = uart  @ 0x1000_1000, 4 KB window.
+    // Index 3 = timer @ 0x1000_2000, 4 KB window.
+    localparam [4*32-1:0] IC_BASE_ADDR  =
+        {32'h1000_2000, 32'h1000_1000, 32'h1000_0000, 32'h8000_0000};
+    localparam [4*32-1:0] IC_ADDR_WIDTH =
+        {32'd12,        32'd12,        32'd12,        32'd16};
 
-    wire [95:0] ic_m_awaddr, ic_m_araddr, ic_m_wdata, ic_m_rdata;
-    wire [8:0]  ic_m_awprot, ic_m_arprot;
-    wire [11:0] ic_m_wstrb;
-    wire [2:0]  ic_m_awvalid, ic_m_awready, ic_m_wvalid, ic_m_wready;
-    wire [2:0]  ic_m_bvalid, ic_m_bready, ic_m_arvalid, ic_m_arready;
-    wire [2:0]  ic_m_rvalid, ic_m_rready;
-    wire [5:0]  ic_m_bresp, ic_m_rresp;
+    wire [127:0] ic_m_awaddr, ic_m_araddr, ic_m_wdata, ic_m_rdata;
+    wire [11:0]  ic_m_awprot, ic_m_arprot;
+    wire [15:0]  ic_m_wstrb;
+    wire [3:0]   ic_m_awvalid, ic_m_awready, ic_m_wvalid, ic_m_wready;
+    wire [3:0]   ic_m_bvalid, ic_m_bready, ic_m_arvalid, ic_m_arready;
+    wire [3:0]   ic_m_rvalid, ic_m_rready;
+    wire [7:0]   ic_m_bresp, ic_m_rresp;
 
     axil_interconnect #(
-        .S_COUNT(1), .M_COUNT(3),
+        .S_COUNT(1), .M_COUNT(4),
         .DATA_WIDTH(32), .ADDR_WIDTH(32), .STRB_WIDTH(4),
         .M_BASE_ADDR(IC_BASE_ADDR),
         .M_ADDR_WIDTH(IC_ADDR_WIDTH)
@@ -257,6 +262,34 @@ module soc #(
         .s_axil_rresp   (ic_m_rresp[5:4]),
         .s_axil_rvalid  (ic_m_rvalid[2]),
         .s_axil_rready  (ic_m_rready[2])
+    );
+
+    // ---- slave 3: timer -----------------------------------------------
+    timer u_timer (
+        .clk   (clk),
+        .rst_n (rst_n),
+
+        .timer_irq (timer_irq),
+
+        .s_axil_awaddr  (ic_m_awaddr[127:96]),
+        .s_axil_awprot  (ic_m_awprot[11:9]),
+        .s_axil_awvalid (ic_m_awvalid[3]),
+        .s_axil_awready (ic_m_awready[3]),
+        .s_axil_wdata   (ic_m_wdata[127:96]),
+        .s_axil_wstrb   (ic_m_wstrb[15:12]),
+        .s_axil_wvalid  (ic_m_wvalid[3]),
+        .s_axil_wready  (ic_m_wready[3]),
+        .s_axil_bresp   (ic_m_bresp[7:6]),
+        .s_axil_bvalid  (ic_m_bvalid[3]),
+        .s_axil_bready  (ic_m_bready[3]),
+        .s_axil_araddr  (ic_m_araddr[127:96]),
+        .s_axil_arprot  (ic_m_arprot[11:9]),
+        .s_axil_arvalid (ic_m_arvalid[3]),
+        .s_axil_arready (ic_m_arready[3]),
+        .s_axil_rdata   (ic_m_rdata[127:96]),
+        .s_axil_rresp   (ic_m_rresp[7:6]),
+        .s_axil_rvalid  (ic_m_rvalid[3]),
+        .s_axil_rready  (ic_m_rready[3])
     );
 
 endmodule
