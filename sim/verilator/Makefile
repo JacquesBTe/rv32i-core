@@ -7,18 +7,36 @@ TB_DIR := $(REPO)/sim/verilator
 WAVE_D := $(REPO)/sim/waves
 OBJ    := $(TB_DIR)/obj_dir/$(MODULE)
 
-# Per-module source lists. Default (below) is rtl/core/<MODULE>.v; add an entry
-# here only when a module needs extra files (e.g. a package or a submodule).
+VENDOR_AXI  := $(RTL)/vendor/verilog-axi
+VENDOR_UART := $(RTL)/vendor/verilog-uart
+VLT_CFG     := $(TB_DIR)/vendor.vlt
+
+VENDOR_AXI_SRCS := $(VENDOR_AXI)/axil_reg_if.v $(VENDOR_AXI)/axil_reg_if_wr.v \
+                   $(VENDOR_AXI)/axil_reg_if_rd.v $(VENDOR_AXI)/axil_interconnect.v \
+                   $(VENDOR_AXI)/arbiter.v $(VENDOR_AXI)/priority_encoder.v
+
+CORE_SRCS := $(RTL)/core/core.v $(RTL)/core/regfile.v $(RTL)/core/alu.v \
+             $(RTL)/core/immgen.v $(RTL)/core/decoder.v $(RTL)/core/imem.v \
+             $(RTL)/core/dmem.v $(RTL)/core/branch_cmp.v $(RTL)/core/csr.v
+
+# Per-module source lists. Anything not listed falls back to a search of
+# rtl/core and rtl/soc for <MODULE>.v.
 RTL_selftest := $(TB_DIR)/selftest/selftest.v
-RTL_core := $(RTL)/core/core.v $(RTL)/core/regfile.v $(RTL)/core/alu.v \
-            $(RTL)/core/immgen.v $(RTL)/core/decoder.v $(RTL)/core/imem.v \
-            $(RTL)/core/dmem.v $(RTL)/core/branch_cmp.v $(RTL)/core/csr.v
+RTL_core     := $(CORE_SRCS)
+RTL_soc      := $(RTL)/soc/soc.v $(RTL)/soc/axil_master.v $(RTL)/soc/gpio.v \
+                $(RTL)/soc/uart_axil.v $(RTL)/soc/timer.v \
+                $(CORE_SRCS) $(VENDOR_AXI_SRCS) \
+                $(VENDOR_UART)/uart_rx.v $(VENDOR_UART)/uart_tx.v \
+                $(VLT_CFG)
 
-RTL_SRCS := $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),$(RTL)/core/$(MODULE).v)
-TB_SRC   := $(TB_DIR)/tb_$(MODULE).cpp
-EXE      := $(OBJ)/V$(MODULE)
+# Deferred (=) so the RTL_<module> overrides above are all visible.
+RTL_SRCS = $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),\
+             $(wildcard $(RTL)/core/$(MODULE).v $(RTL)/soc/$(MODULE).v))
 
-MODULES  := regfile alu immgen decoder imem dmem
+TB_SRC := $(TB_DIR)/tb_$(MODULE).cpp
+EXE    := $(OBJ)/V$(MODULE)
+
+MODULES := regfile alu immgen decoder imem dmem branch_cmp csr core
 
 VFLAGS := --cc --exe --build -j 0 \
           --top-module $(MODULE) \
