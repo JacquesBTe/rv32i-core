@@ -33,6 +33,9 @@ RTL_uart_axil := $(RTL)/soc/uart_axil.v \
                 $(VENDOR_AXI)/axil_reg_if.v $(VENDOR_AXI)/axil_reg_if_wr.v \
                 $(VENDOR_AXI)/axil_reg_if_rd.v \
                 $(VENDOR_UART)/uart_rx.v $(VENDOR_UART)/uart_tx.v $(VLT_CFG)
+RTL_timer    := $(RTL)/soc/timer.v $(VENDOR_AXI)/axil_reg_if.v \
+                $(VENDOR_AXI)/axil_reg_if_wr.v $(VENDOR_AXI)/axil_reg_if_rd.v \
+                $(VLT_CFG)
 RTL_soc      := $(RTL)/soc/soc.v $(RTL)/soc/axil_master.v $(RTL)/soc/gpio.v \
                 $(RTL)/soc/axil_mem.v $(RTL)/soc/uart_axil.v $(RTL)/soc/timer.v \
                 $(CORE_SRCS) $(RTL)/core/dmem.v $(VENDOR_AXI_SRCS) \
@@ -49,7 +52,7 @@ EXE    := $(OBJ)/V$(MODULE)
 # soc is deliberately absent: it has no standalone program to run, and its
 # verification is tests/run_tests.sh, which drives it with +imem=/+dmem=.
 MODULES := regfile alu immgen decoder imem dmem branch_cmp csr \
-           axil_master axil_mem gpio uart_axil
+           axil_master axil_mem gpio uart_axil timer
 
 VFLAGS := --cc --exe --build -j 0 \
           --top-module $(MODULE) \
