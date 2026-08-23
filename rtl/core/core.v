@@ -91,11 +91,14 @@ module core #(
     wire [31:0] alu_a, alu_b, alu_result;
     wire        branch_taken;
     wire        trap;
+    wire        sync_trap;
+    wire        take_interrupt;
     wire [31:0] trap_cause;
     wire [31:0] csr_rdata;
     wire        csr_illegal;
     wire [31:0] mtvec_out, mepc_out;
     wire        priv_m_out;
+    wire        interrupt_pending;
 
     // ---- EX/MEM --------------------------------------------------
     reg  [31:0] ex_mem_alu_result, ex_mem_rs2_data, ex_mem_pc_plus4;
@@ -137,11 +140,20 @@ module core #(
 
     assign pc_next = pc_redirect ? pc_target : pc_plus4;
 
+    // flush (== pc_redirect) must outrank load_use, same as every other
+    // pipeline register below -- a load that also happens to be the
+    // instruction an interrupt lands on is a real load_use hazard on the
+    // instruction behind it AND the target of a redirect at the same
+    // time. Checking load_use first would silently drop the redirect
+    // (PC just holds) while IF/ID and ID/EX still bubble for the flush,
+    // leaving PC pointed at neither the interrupted instruction nor
+    // anywhere the redirect was supposed to send it.
     always @(posedge clk) begin
         if (!rst_n) pc <= RESET_PC;
-        else if (bus_stall) pc <= pc; //hold -- transaction in flight
-        else if (load_use) pc <= pc; //hold
-        else        pc <= pc_next;
+        else if (bus_stall)   pc <= pc; //hold -- transaction in flight
+        else if (pc_redirect) pc <= pc_target;
+        else if (load_use)    pc <= pc; //hold
+        else                  pc <= pc_next;
     end
 
     wire flush = pc_redirect;
@@ -366,11 +378,24 @@ module core #(
     wire [31:0] csr_wdata = id_ex_csr_use_imm ? {27'b0, id_ex_rs1_addr}
                                               : fwd_rs1;
 
-    assign trap       = id_ex_illegal || csr_illegal || id_ex_is_ecall;
+    // Interrupts are asynchronous -- they arrive at an arbitrary cycle,
+    // not because of the instruction currently in EX. Treat one exactly
+    // like a trap on that instruction: suppress its writes, save its PC
+    // (not PC+4, since it never completed and must run again after
+    // mret), and redirect to mtvec. A synchronous trap outranks an
+    // interrupt since the EX instruction genuinely faulted, and a
+    // transaction already in flight (bus_stall) can't be redirected out
+    // from under -- both wait for a cycle where neither is true.
+    assign sync_trap     = id_ex_illegal || csr_illegal || id_ex_is_ecall;
+    assign take_interrupt = interrupt_pending && !sync_trap && !bus_stall;
+    assign trap           = sync_trap || take_interrupt;
+
     // ecall's cause depends on the privilege mode it's called from --
     // 11 from M-mode, 8 from U-mode (Spike's convention, and what the
-    // ld_st riscv-test expects).
-    assign trap_cause = id_ex_is_ecall ? (priv_m_out ? 32'd11 : 32'd8)
+    // ld_st riscv-test expects). take_interrupt implies !sync_trap, so
+    // this mux never has to arbitrate between the two.
+    assign trap_cause = take_interrupt  ? 32'h8000_0007 :
+                        id_ex_is_ecall  ? (priv_m_out ? 32'd11 : 32'd8)
                                         : 32'd2;
 
     // A faulting instruction must have no side effects.
@@ -395,7 +420,8 @@ module core #(
         .timer_irq   (timer_irq),
         .mtvec_out   (mtvec_out),
         .mepc_out    (mepc_out),
-        .priv_m_out  (priv_m_out)
+        .priv_m_out  (priv_m_out),
+        .interrupt_pending (interrupt_pending)
     );
                                                             
     // ---- EX/MEM register ----

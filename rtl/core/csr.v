@@ -40,7 +40,8 @@ module csr (
 
     output wire [31:0] mtvec_out,
     output wire [31:0] mepc_out,
-    output wire        priv_m_out    // 1 = M-mode, 0 = U-mode
+    output wire        priv_m_out,   // 1 = M-mode, 0 = U-mode
+    output wire        interrupt_pending
 );
 
     localparam [11:0] CSR_MSTATUS  = 12'h300;
@@ -61,6 +62,7 @@ module csr (
     assign mtvec_out   = mtvec;
     assign mepc_out    = mepc;
     assign priv_m_out  = priv_m;
+    assign interrupt_pending = mstatus_mie && mie_mtie && timer_irq;
 
     wire [31:0] mstatus_rdata = {19'b0, mstatus_mpp, 3'b0, mstatus_mpie,
                                   3'b0, mstatus_mie, 3'b0};

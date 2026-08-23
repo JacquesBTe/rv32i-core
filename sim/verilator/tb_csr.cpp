@@ -192,6 +192,23 @@ int main(int argc, char** argv) {
     CHECK_EQ(rd(CSR_MIP), 0x00000000u);
     CHECK_EQ(illegal(CSR_MIP, OP_RW, true, true), false);
 
+    tb_begin("14b. interrupt_pending needs mstatus.MIE, mie.MTIE, and mip.MTIP together");
+    access(CSR_MSTATUS, OP_RW, 0, true, true);   // MIE = 0
+    access(CSR_MIE, OP_RW, 0, true, true);       // MTIE = 0
+    d.timer_irq = 0;
+    tb.settle();
+    CHECK_EQ(d.interrupt_pending, 0);
+    access(CSR_MIE, OP_RW, (1u << 7), true, true);   // MTIE = 1, MIE still 0
+    d.timer_irq = 1;
+    tb.settle();
+    CHECK_EQ(d.interrupt_pending, 0);                // mstatus.MIE still gates it
+    access(CSR_MSTATUS, OP_RS, (1u << 3), true, true);   // MIE = 1
+    tb.settle();
+    CHECK_EQ(d.interrupt_pending, 1);                // all three now set
+    d.timer_irq = 0;
+    tb.settle();
+    CHECK_EQ(d.interrupt_pending, 0);                // drops the instant MTIP clears
+
     tb_begin("15. mstatus: only MIE(3)/MPIE(7)/MPP(12:11) are real");
     access(CSR_MSTATUS, OP_RW, 0xFFFFFFFF, true, true);
     CHECK_EQ(rd(CSR_MSTATUS), (uint32_t)((0x3u << 11) | (1u << 7) | (1u << 3)));
