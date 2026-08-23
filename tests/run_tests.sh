@@ -4,7 +4,7 @@ set -u
 
 ISA=~/rv32i-core/tests/riscv-tests/isa
 WAVES=~/rv32i-core/sim/waves
-EXE=~/rv32i-core/sim/verilator/obj_dir/core/Vcore
+EXE=~/rv32i-core/sim/verilator/obj_dir/soc/Vsoc
 MAKEHEX=~/rv32i-core/sw/common/makehex.py
 
 pass=0; fail=0; failed=()

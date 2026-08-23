@@ -17,7 +17,7 @@ VENDOR_AXI_SRCS := $(VENDOR_AXI)/axil_reg_if.v $(VENDOR_AXI)/axil_reg_if_wr.v \
 
 CORE_SRCS := $(RTL)/core/core.v $(RTL)/core/regfile.v $(RTL)/core/alu.v \
              $(RTL)/core/immgen.v $(RTL)/core/decoder.v $(RTL)/core/imem.v \
-             $(RTL)/core/dmem.v $(RTL)/core/branch_cmp.v $(RTL)/core/csr.v
+             $(RTL)/core/branch_cmp.v $(RTL)/core/csr.v
 
 # Per-module source lists. Anything not listed falls back to a search of
 # rtl/core and rtl/soc for <MODULE>.v.
@@ -26,9 +26,12 @@ RTL_core     := $(CORE_SRCS)
 RTL_gpio     := $(RTL)/soc/gpio.v $(VENDOR_AXI)/axil_reg_if.v \
                 $(VENDOR_AXI)/axil_reg_if_wr.v $(VENDOR_AXI)/axil_reg_if_rd.v \
                 $(VLT_CFG)
+RTL_axil_mem := $(RTL)/soc/axil_mem.v $(RTL)/core/dmem.v \
+                $(VENDOR_AXI)/axil_reg_if.v $(VENDOR_AXI)/axil_reg_if_wr.v \
+                $(VENDOR_AXI)/axil_reg_if_rd.v $(VLT_CFG)
 RTL_soc      := $(RTL)/soc/soc.v $(RTL)/soc/axil_master.v $(RTL)/soc/gpio.v \
-                $(RTL)/soc/uart_axil.v $(RTL)/soc/timer.v \
-                $(CORE_SRCS) $(VENDOR_AXI_SRCS) \
+                $(RTL)/soc/axil_mem.v $(RTL)/soc/uart_axil.v $(RTL)/soc/timer.v \
+                $(CORE_SRCS) $(RTL)/core/dmem.v $(VENDOR_AXI_SRCS) \
                 $(VENDOR_UART)/uart_rx.v $(VENDOR_UART)/uart_tx.v \
                 $(VLT_CFG)
 
@@ -39,8 +42,8 @@ RTL_SRCS = $(if $(RTL_$(MODULE)),$(RTL_$(MODULE)),\
 TB_SRC := $(TB_DIR)/tb_$(MODULE).cpp
 EXE    := $(OBJ)/V$(MODULE)
 
-MODULES := regfile alu immgen decoder imem dmem branch_cmp csr core \
-           axil_master gpio
+MODULES := regfile alu immgen decoder imem dmem branch_cmp csr \
+           axil_master gpio axil_mem soc
 
 VFLAGS := --cc --exe --build -j 0 \
           --top-module $(MODULE) \

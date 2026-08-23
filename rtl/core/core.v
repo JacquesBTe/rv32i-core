@@ -3,7 +3,6 @@
 
 module core #(
     parameter IMEM_INIT = "C:/dev/rv32i-core/sim/waves/count.hex",
-    parameter DMEM_INIT = "C:/dev/rv32i-core/sim/waves/count.hex",
     parameter RESET_PC  = 32'h80000000
 ) (
     input  wire        clk,
@@ -13,6 +12,14 @@ module core #(
     // high, a bus transaction is physically in flight and every pipeline
     // register must freeze, not just the ones downstream of MEM.
     input  wire        bus_stall,
+
+    // ---- MEM stage <-> axil_master, in soc.v ----
+    output wire [31:0] mem_addr,
+    output wire [31:0] mem_wdata,
+    output wire [2:0]  mem_funct3,
+    output wire        mem_re,
+    output wire        mem_we,
+    input  wire [31:0] mem_rdata,
 
     // trace outputs -- for the phase 0 trace_diff harness
     output wire [31:0] trace_pc,
@@ -46,8 +53,8 @@ module core #(
     wire [2:0]  funct3;
     wire [3:0]  alu_op;
     wire        alu_src, alu_a_pc, alu_a_zero;
-    wire        reg_we, mem_we;
-    wire        mem_re;
+    wire        reg_we, dec_mem_we;
+    wire        dec_mem_re;
     wire [1:0]  wb_sel;
     wire        is_branch, is_jal, is_jalr;
     wire        illegal;
@@ -91,16 +98,14 @@ module core #(
     reg  [31:0] ex_mem_csr_rdata;
     reg  [4:0]  ex_mem_rd_addr;
     reg  [2:0]  ex_mem_funct3;
-    reg         ex_mem_reg_we, ex_mem_mem_we;
+    reg         ex_mem_reg_we, ex_mem_mem_we, ex_mem_mem_re;
     reg  [1:0]  ex_mem_wb_sel;
     reg  [31:0] ex_mem_pc, ex_mem_instr;
-
-    // ---- MEM -----------------------------------------------------
-    wire [31:0] mem_rdata;
 
     // ---- MEM/WB --------------------------------------------------
     reg  [31:0] mem_wb_alu_result, mem_wb_pc_plus4;
     reg  [31:0] mem_wb_csr_rdata;
+    reg  [31:0] mem_wb_rdata;
     reg  [4:0]  mem_wb_rd_addr;
     reg         mem_wb_reg_we;
     reg  [1:0]  mem_wb_wb_sel;
@@ -185,8 +190,8 @@ module core #(
         .alu_a_pc    (alu_a_pc),
         .alu_a_zero  (alu_a_zero),
         .reg_we      (reg_we),
-        .mem_we      (mem_we),
-        .mem_re      (mem_re),
+        .mem_we      (dec_mem_we),
+        .mem_re      (dec_mem_re),
         .wb_sel      (wb_sel),
         .is_branch   (is_branch),
         .is_jal      (is_jal),
@@ -270,11 +275,11 @@ module core #(
             id_ex_alu_a_pc    <= alu_a_pc;
             id_ex_alu_a_zero  <= alu_a_zero;
 
-            id_ex_mem_re      <= mem_re;
+            id_ex_mem_re      <= dec_mem_re;
             id_ex_wb_sel      <= wb_sel;
 
             id_ex_reg_we      <= reg_we;
-            id_ex_mem_we      <= mem_we;
+            id_ex_mem_we      <= dec_mem_we;
             id_ex_is_branch   <= is_branch;
             id_ex_is_jal      <= is_jal;
             id_ex_is_jalr     <= is_jalr;
@@ -386,6 +391,7 @@ module core #(
         if (!rst_n) begin
             ex_mem_reg_we <= 1'b0;
             ex_mem_mem_we <= 1'b0;
+            ex_mem_mem_re <= 1'b0;
         end else if (bus_stall) begin
             // hold -- keeps addr/wdata/funct3 stable for the whole
             // transaction, since axil_master reads them straight from
@@ -393,6 +399,7 @@ module core #(
         end else begin
             ex_mem_reg_we     <= reg_we_final;
             ex_mem_mem_we     <= mem_we_final;
+            ex_mem_mem_re     <= id_ex_mem_re && !trap;
 
             ex_mem_alu_result <= alu_result;
             ex_mem_rs2_data   <= fwd_rs2;
@@ -410,18 +417,20 @@ module core #(
 
 
 // ====================================================================
-// MEM -- data memory
+// MEM -- data memory, over the bus
 // ====================================================================
 
-    dmem #(.INIT_FILE(DMEM_INIT)) u_dmem (
-        .clk    (clk),
-        .en    (!(load_use || bus_stall)),
-        .addr   (ex_mem_alu_result),
-        .wdata  (ex_mem_rs2_data),
-        .funct3 (ex_mem_funct3),
-        .we     (ex_mem_mem_we),
-        .rdata  (mem_rdata)
-    );
+    // axil_master lives in soc.v; it turns these into one AXI4-Lite
+    // transaction and drives bus_stall until it completes. mem_rdata is
+    // valid combinationally on the cycle the transaction completes --
+    // still the cycle EX/MEM holds this instruction, one cycle before it
+    // reaches MEM/WB -- so it must be captured below, not read live from
+    // WB the way the old directly-attached synchronous dmem allowed.
+    assign mem_addr   = ex_mem_alu_result;
+    assign mem_wdata  = ex_mem_rs2_data;
+    assign mem_funct3 = ex_mem_funct3;
+    assign mem_re     = ex_mem_mem_re;
+    assign mem_we     = ex_mem_mem_we;
 
     // ---- MEM/WB register ----
     always @(posedge clk) begin
@@ -436,6 +445,7 @@ module core #(
             mem_wb_alu_result <= ex_mem_alu_result;
             mem_wb_pc_plus4   <= ex_mem_pc_plus4;
             mem_wb_csr_rdata  <= ex_mem_csr_rdata;
+            mem_wb_rdata      <= mem_rdata;
 
             mem_wb_rd_addr    <= ex_mem_rd_addr;
             mem_wb_wb_sel     <= ex_mem_wb_sel;
@@ -452,7 +462,7 @@ module core #(
 
     assign wb_data = (mem_wb_wb_sel == 2'b11) ? mem_wb_csr_rdata :
                      (mem_wb_wb_sel == 2'b10) ? mem_wb_pc_plus4  :
-                     (mem_wb_wb_sel == 2'b01) ? mem_rdata 
+                     (mem_wb_wb_sel == 2'b01) ? mem_wb_rdata
                                               : mem_wb_alu_result;
 
 

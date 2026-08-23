@@ -1,5 +1,5 @@
 #include "tb_common.h"
-#include "Vcore.h"
+#include "Vsoc.h"
 #include <cstdio>
 
 // riscv-tests HTIF exit protocol: the program stores a nonzero word to
@@ -9,17 +9,17 @@ static const uint32_t TOHOST_ADDR = 0x80001000;
 static const int      MAX_CYCLES  = 200000;
 
 int main(int argc, char** argv) {
-    const char* csv_path = "core_trace.csv";
+    const char* csv_path = "soc_trace.csv";
     for (int i = 1; i < argc; i++)
         if (!strncmp(argv[i], "+trace=", 7)) csv_path = argv[i] + 7;
 
-    Tb<Vcore> tb(argc, argv, "core");
+    Tb<Vsoc> tb(argc, argv, "soc");
     auto& d = tb.dut;
 
     FILE* csv = fopen(csv_path, "w");
     if (!csv) { printf("[tb] cannot open %s\n", csv_path); return 2; }
 
-    d.clk = 0; d.rst_n = 0; d.bus_stall = 0;
+    d.clk = 0; d.rst_n = 0; d.sw = 0;
     tb.tick(); tb.tick();
     d.rst_n = 1;
 
