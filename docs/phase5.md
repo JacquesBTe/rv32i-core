@@ -155,8 +155,10 @@ failure is `fence_i`, which is out of scope for this core: `fence.i` exists
 to flush an instruction cache after self-modifying code, and this core has
 no instruction cache and a read-only `imem` — there's nothing for it to do.
 
-All unit-level testbenches (`make test-all`) pass: 12 modules, ~176,000
-directed and randomized checks combined.
+All unit-level testbenches (`make test-all`) pass: 13 modules, 182,437
+directed and randomized checks combined (regfile, alu, immgen, decoder,
+imem, dmem, branch_cmp, csr, axil_master, axil_mem, gpio, uart_axil,
+timer).
 
 ## Hardware verification
 
@@ -188,14 +190,31 @@ it good after the first minute.
 
 ## Timing
 
-**Pending a fresh post-route run.** The design has changed substantially
-since the last timing check (that one — WNS +0.538 ns at 75 MHz, 2,956
-endpoints — predates the AXI4-Lite bus, all three peripherals, the
-interrupt path, and native misalignment splitting). The address-decode
-logic the bus adds sits in the MEM path, which was already the tightest
-part of the design, so this needs re-verification before treating 75 MHz
-as safe. Report the actual WNS/Fmax from the next Vivado implementation
-run here rather than assuming the old number still holds.
+Post-route, Vivado 2025.2, Artix-7 xc7a35tcpg236-1, 75 MHz (MMCM-derived
+from the board's 100 MHz oscillator):
+
+| Stage | WNS | Endpoints |
+|---|---|---|
+| Core only, before the bus | +0.538 ns | 2,956 |
+| After bus integration (step 5) | +1.223 ns | 2,982 |
+| Full SoC (this phase, final) | +1.092 ns | 4,504 |
+
+0 of 4,504 endpoints fail. WHS (hold) is +0.057 ns. Achievable Fmax is
+approximately 82 MHz.
+
+Timing *improved* when the bus was added, which is the opposite of what
+adding an address-decoded, multi-slave interconnect in the MEM path would
+naively suggest. The reason is that `axil_master` absorbed the byte-lane
+selection, write-shift, and read-shift/sign-extension logic that used to
+live in `dmem` directly (see "What was built" above) — that logic used to
+sit on the same critical path as the BRAM output register, the forwarding
+mux, and the branch comparator, all within one cycle. Moving it into
+`axil_master`, behind its own transaction boundary, broke that path across
+a cycle rather than shortening it. The bus bought back timing margin at
+the cost of IPC: the same test programs now take roughly 40% more cycles
+to retire the same instructions, since a load or store that used to
+complete in the memory stage's own cycle now costs at least one
+`bus_stall` cycle for the AXI4-Lite handshake.
 
 ## Remaining gaps
 
