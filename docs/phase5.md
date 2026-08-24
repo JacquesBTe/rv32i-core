@@ -115,6 +115,27 @@ no instruction cache and a read-only `imem` — there's nothing for it to do.
 All unit-level testbenches (`make test-all`) pass: 12 modules, ~176,000
 directed and randomized checks combined.
 
+## Hardware verification
+
+Confirmed on a real Basys3 (not just simulation), as of 2026-08-23:
+
+- **GPIO**: `sw/examples/gpio_loop.c` — flipping a switch lights the
+  corresponding LED.
+- **Core + bus + UART end to end**: `sw/examples/hello.c` — "hello from
+  rv32i-core" / "self-test: PASS" printed and read over a real serial
+  terminal at 115200 8N1, via the Basys3's onboard USB-UART bridge.
+
+`basys3_top.v` currently points at `sw/examples/soc_demo.c` — GPIO, UART,
+and the timer/interrupt path all running concurrently (switches continually
+mirrored to the LEDs by the main loop; a UART "tick" line printed once a
+second by the timer interrupt handler, which re-arms `mtimecmp` and
+returns). Verified in simulation (a shortened interval, decoding the actual
+`txd` bit stream and toggling `sw` mid-run: switches tracked correctly, five
+ticks printed over the run at the expected period, bus correctly arbitrated
+between the main loop's GPIO writes and the handler's UART writes) but not
+yet run on the board — that's the one hardware confirmation still open from
+this phase.
+
 ## Timing
 
 **Pending a fresh post-route run.** The design has changed substantially
