@@ -74,6 +74,29 @@ building the interrupt path (step 11):
   downstream looked at it during a bubble — until the first pass at
   misalignment detection combined it with the bubble's equally-stale
   `alu_result` and produced spurious faults on ordinary, aligned loads.
+- A third instance of the same pattern, found later via `soc_demo.c`
+  running at its real 1-second interrupt interval on real hardware: on
+  any flush (a resolved jump/branch, a trap, an `mret`), `IF/ID`'s
+  `if_id_pc <= pc` captured the *pre-redirect* `pc`, not the `pc_target`
+  that `pc` itself is being set to at that same edge. The instruction
+  riding along with it is always correctly nulled to a NOP
+  (`if_id_valid` goes to 0), so the wrong PC normally never surfaces —
+  until an interrupt happens to land on that exact bubble while it's
+  sitting in `id_ex` and captures its stale, wrong-path PC into `mepc`.
+  `mret` then resumes at an address that was never really going to
+  execute — usually mid-loop garbage a couple of instructions past an
+  unresolved backward branch, which reliably decoded as illegal on the
+  very next cycle. That illegal-instruction trap re-enters the same
+  handler, which has no way to tell it apart from a real timer
+  interrupt, so it looks identical to the timer refiring in a tight
+  storm. This one needed a real 75,000,000-cycle interval to catch: a
+  short test interval (used for practical simulation runtime elsewhere
+  in this phase) means very few pipeline states get sampled by an
+  interrupt before the test ends, and this specific coincidence — an
+  interrupt landing on an already-flushed bubble two instructions past
+  an unresolved backward jump — is rare enough that it never fired in
+  any of the shorter tests. Fixed by capturing `pc_target` instead of
+  `pc` on flush.
 
 **Read timing changed once `dmem` moved behind the bus.** The old
 directly-attached `dmem` had its own one-cycle registered read latency,
@@ -129,12 +152,21 @@ Confirmed on a real Basys3 (not just simulation), as of 2026-08-23:
 and the timer/interrupt path all running concurrently (switches continually
 mirrored to the LEDs by the main loop; a UART "tick" line printed once a
 second by the timer interrupt handler, which re-arms `mtimecmp` and
-returns). Verified in simulation (a shortened interval, decoding the actual
-`txd` bit stream and toggling `sw` mid-run: switches tracked correctly, five
-ticks printed over the run at the expected period, bus correctly arbitrated
-between the main loop's GPIO writes and the handler's UART writes) but not
-yet run on the board — that's the one hardware confirmation still open from
-this phase.
+returns).
+
+The first hardware run of this program is what actually found the
+`if_id_pc` flush bug documented above: on the board, `tick` printed far
+faster than once a second and the LEDs froze until a manual reset. The
+bug had passed every prior test because it needs an interrupt to land on
+an already-flushed pipeline bubble sitting two instructions past an
+unresolved backward jump, at the *real* 1-second interrupt interval — a
+coincidence rare enough that none of the shorter test intervals used
+elsewhere in this phase (chosen for practical simulation runtime) ever
+hit it. Re-verified after the fix, both in simulation at the real
+interval (ticks now land ~75,000,000 cycles apart as intended, confirmed
+out to 3 ticks / 250,000,000 cycles) and functionally identical
+switch-tracking — but not yet re-confirmed on the physical board. That's
+the one hardware confirmation still open from this phase.
 
 ## Timing
 

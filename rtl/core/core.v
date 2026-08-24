@@ -164,7 +164,15 @@ module core #(
         end else if (bus_stall) begin
             if_id_pc    <= if_id_pc; // hold -- transaction in flight
         end else if (flush) begin
-            if_id_pc    <= pc;
+            // pc_target, not pc: PC is being redirected at this same edge,
+            // and if_id_pc must track where it's actually going, not the
+            // stale pre-redirect value. The instruction that lands here is
+            // always a NOP regardless (if_id_valid goes to 0 below), so
+            // this normally never surfaces -- until an interrupt happens
+            // to land on this exact bubble in id_ex and captures its PC
+            // into mepc. Then a stale if_id_pc means mret resumes at a
+            // wrong-path address that was never really going to execute.
+            if_id_pc    <= pc_target;
             //if_id_instr <= 32'h00000013;   // addi x0,x0,0 -- a real nop
         end else if (load_use)begin
             if_id_pc    <= if_id_pc; // hold
