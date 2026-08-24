@@ -27,8 +27,8 @@ module basys3_top (
 
     // ---- soc ----
     soc #(
-        .IMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/uart_hello.hex"),
-        .DMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/uart_hello.hex")
+        .IMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/hello.hex"),
+        .DMEM_INIT ("C:/Users/jacqu/Desktop/rv32i-core/rv32i-core/rtl/fpga/hello.hex")
     ) u_soc (
         .clk      (cpu_clk),
         .rst_n    (rst_n),
