@@ -262,8 +262,19 @@ module core #(
         end else if (bus_stall) begin
             // hold -- transaction in flight downstream
         end else if (flush || load_use) begin
-            id_ex_pc          <= 32'b0;
-            id_ex_pc_plus4    <= 32'b0;
+            // Same reasoning as the IF/ID fix above, one stage later: the
+            // bubble's instruction content is always correctly nulled, so
+            // id_ex_pc normally doesn't matter -- until an interrupt lands
+            // on this exact bubble and captures it into mepc. flush means
+            // control is headed to pc_target (a resolved jump/branch, a
+            // trap, an mret); load_use alone means if_id is just being
+            // held while its hazard clears, not redirected, so the
+            // correct "next real instruction" is still if_id_pc
+            // unchanged. flush wins when both are true, same as PC's own
+            // priority (e.g. an interrupt landing on a load that's also
+            // the source of a load-use hazard on the next instruction).
+            id_ex_pc          <= flush ? pc_target : if_id_pc;
+            id_ex_pc_plus4    <= flush ? (pc_target + 32'd4) : (if_id_pc + 32'd4);
             id_ex_instr       <= 32'h00000013;
             id_ex_rs1_addr    <= 5'b0;
             id_ex_rs2_addr    <= 5'b0;

@@ -97,6 +97,26 @@ building the interrupt path (step 11):
   an unresolved backward jump — is rare enough that it never fired in
   any of the shorter tests. Fixed by capturing `pc_target` instead of
   `pc` on flush.
+- The same fix wasn't complete: `ID/EX`'s own bubble (one stage later,
+  same `flush || load_use` branch) hardcoded `id_ex_pc <= 32'b0`
+  outright, rather than carrying forward any real address at all. An
+  interrupt landing on *this* bubble captured `mepc = 0` instead of a
+  wrong-path address — same failure shape, different concrete symptom
+  (intermittent freezes after 5-10 seconds on hardware, since it needs
+  the interrupt to land during this specific one-cycle window rather
+  than the wider one the IF/ID fix covered, so it took longer to hit by
+  chance). Fixed the same way, but the correct value differs by cause:
+  `flush` means control is headed to `pc_target`; `load_use` alone
+  means IF/ID is just being held while its hazard clears, not
+  redirected, so the right "next real instruction" is `if_id_pc`
+  unchanged. `flush` wins when both are true (e.g. an interrupt landing
+  on a load that's also the source of a load-use hazard on the next
+  instruction), matching PC's own priority. Verified in simulation with
+  switches changed at randomized intervals throughout an ~12-second run
+  (900,000,000 cycles, 11 ticks) — deliberately varying the loop's
+  timing phase against the interrupt on every tick, the way hours of
+  free-running hardware would eventually sample many different
+  phases too.
 
 **Read timing changed once `dmem` moved behind the bus.** The old
 directly-attached `dmem` had its own one-cycle registered read latency,
@@ -156,17 +176,15 @@ returns).
 
 The first hardware run of this program is what actually found the
 `if_id_pc` flush bug documented above: on the board, `tick` printed far
-faster than once a second and the LEDs froze until a manual reset. The
-bug had passed every prior test because it needs an interrupt to land on
-an already-flushed pipeline bubble sitting two instructions past an
-unresolved backward jump, at the *real* 1-second interrupt interval — a
-coincidence rare enough that none of the shorter test intervals used
-elsewhere in this phase (chosen for practical simulation runtime) ever
-hit it. Re-verified after the fix, both in simulation at the real
-interval (ticks now land ~75,000,000 cycles apart as intended, confirmed
-out to 3 ticks / 250,000,000 cycles) and functionally identical
-switch-tracking — but not yet re-confirmed on the physical board. That's
-the one hardware confirmation still open from this phase.
+faster than once a second and the LEDs froze until a manual reset. Fixing
+it and re-flashing surfaced a second, narrower instance of the same bug
+(`ID/EX`'s own bubble, see above) as an intermittent freeze after 5-10
+seconds instead of an immediate storm. Both are fixed now, re-verified in
+simulation with switches changed at randomized intervals across an
+~12-second run — but neither has been re-confirmed on the physical board
+yet. That's the one hardware confirmation still open from this phase, and
+given the history here, worth watching for a while rather than declaring
+it good after the first minute.
 
 ## Timing
 
