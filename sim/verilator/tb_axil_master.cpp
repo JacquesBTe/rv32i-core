@@ -310,5 +310,76 @@ int main(int argc, char** argv) {
         CHECK_EQ(got, want);
     }
 
+    // ---------------------------------------------------------------
+    tb_begin("9. crossing word store, every non-zero lane");
+    for (int lane = 1; lane <= 3; lane++) {
+        uint32_t base = BASE + 8300 + lane * 16;
+        do_store(base,     0, F3_W, 0, 0);
+        do_store(base + 4, 0, F3_W, 0, 0);
+        uint32_t v = 0xAABBCCDD;
+        do_store(base + lane, v, F3_W, tb.rnd(0, 2), tb.rnd(0, 2));
+        uint64_t combined = ((uint64_t)slave.rd_word(base + 4) << 32) | slave.rd_word(base);
+        CHECK_EQ((uint32_t)(combined >> (lane * 8)), v);
+    }
+
+    // ---------------------------------------------------------------
+    tb_begin("10. crossing word load, every non-zero lane");
+    for (int lane = 1; lane <= 3; lane++) {
+        uint32_t base = BASE + 8400 + lane * 16;
+        slave.wr_word(base,     0x11223344, 0xF);
+        slave.wr_word(base + 4, 0x55667788, 0xF);
+        uint64_t combined = ((uint64_t)0x55667788 << 32) | 0x11223344;
+        uint32_t want = (uint32_t)(combined >> (lane * 8));
+        CHECK_EQ(do_load(base + lane, F3_W, tb.rnd(0, 2)), want);
+    }
+
+    // ---------------------------------------------------------------
+    tb_begin("11. crossing half, lane 3 -- store, load, sign/zero extend");
+    {
+        uint32_t base = BASE + 8500;
+        do_store(base,     0, F3_W, 0, 0);
+        do_store(base + 4, 0, F3_W, 0, 0);
+        do_store(base + 3, 0xBEEF, F3_H, 0, 0);
+        uint64_t combined = ((uint64_t)slave.rd_word(base + 4) << 32) | slave.rd_word(base);
+        CHECK_EQ((uint32_t)((combined >> 24) & 0xFFFF), 0xBEEFu);
+
+        slave.wr_word(base,     0x00000000, 0xF);
+        slave.wr_word(base + 4, 0x000000FF, 0xF);   // half's high byte = 0xFF
+        CHECK_EQ(do_load(base + 3, F3_H,  0), 0xFFFFFF00);   // sign-extended (negative)
+        CHECK_EQ(do_load(base + 3, F3_HU, 0), 0x0000FF00);
+    }
+
+    // ---------------------------------------------------------------
+    tb_begin("12. random against shadow model, unaligned offsets -- "
+              "exercises crossing lanes alongside non-crossing ones");
+    for (int i = 0; i < 3000; i++) {
+        int      sz  = tb.rnd(0, 2);
+        uint32_t off = tb.rnd(0, 8187);             // any byte offset, no
+                                                      // alignment mask
+        uint32_t v   = tb.rnd();
+        uint32_t f3  = (sz == 0) ? F3_B : (sz == 1) ? F3_H : F3_W;
+        do_store(BASE + off, v, f3, tb.rnd(0, 3), tb.rnd(0, 3));
+        for (int k = 0; k < (1 << sz); k++)
+            model[off + k] = (v >> (8 * k)) & 0xFF;
+
+        int      lsz  = tb.rnd(0, 2);
+        uint32_t loff = tb.rnd(0, 8187);
+        bool     uns  = tb.rnd(0, 1);
+
+        uint32_t want = 0;
+        for (int k = 0; k < (1 << lsz); k++)
+            want |= (uint32_t)model[loff + k] << (8 * k);
+
+        uint32_t lf3;
+        if (lsz == 2)      { lf3 = F3_W; }
+        else if (lsz == 0) { lf3 = uns ? F3_BU : F3_B;
+                             if (!uns && (want & 0x80))   want |= 0xFFFFFF00; }
+        else               { lf3 = uns ? F3_HU : F3_H;
+                             if (!uns && (want & 0x8000)) want |= 0xFFFF0000; }
+
+        uint32_t got = do_load(BASE + loff, lf3, tb.rnd(0, 3));
+        CHECK_EQ(got, want);
+    }
+
     return tb.finish();
 }

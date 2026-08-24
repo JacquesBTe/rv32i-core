@@ -71,10 +71,8 @@ module core #(
     // ---- ID/EX ---------------------------------------------------
     reg  [31:0] id_ex_pc, id_ex_pc_plus4;
     reg  [31:0] id_ex_rs1_data, id_ex_rs2_data, id_ex_imm;
-    reg  [4:0]  id_ex_rs1_addr, id_ex_rs2_addr;  
-        /* verilator lint_off UNUSEDSIGNAL */
-    reg         id_ex_mem_re;  
-        /* verilator lint_on UNUSEDSIGNAL */                 
+    reg  [4:0]  id_ex_rs1_addr, id_ex_rs2_addr;
+    reg         id_ex_mem_re;
     reg  [4:0]  id_ex_rd_addr;
     reg  [2:0]  id_ex_funct3;
     reg  [3:0]  id_ex_alu_op;
@@ -244,6 +242,7 @@ module core #(
         if (!rst_n) begin
             id_ex_reg_we    <= 1'b0;
             id_ex_mem_we    <= 1'b0;
+            id_ex_mem_re    <= 1'b0;
             id_ex_is_branch <= 1'b0;
             id_ex_is_jal    <= 1'b0;
             id_ex_is_jalr   <= 1'b0;
@@ -264,6 +263,7 @@ module core #(
             id_ex_wb_sel      <= 2'b0;
             id_ex_reg_we      <= 1'b0;
             id_ex_mem_we      <= 1'b0;
+            id_ex_mem_re      <= 1'b0;
             id_ex_is_branch   <= 1'b0;
             id_ex_is_jal      <= 1'b0;
             id_ex_is_jalr     <= 1'b0;
@@ -386,6 +386,12 @@ module core #(
     // interrupt since the EX instruction genuinely faulted, and a
     // transaction already in flight (bus_stall) can't be redirected out
     // from under -- both wait for a cycle where neither is true.
+    //
+    // Misaligned loads/stores are not trapped: axil_master splits a
+    // crossing access into two aligned bus transactions transparently,
+    // so software never sees a fault (riscv-tests' ma_data expects
+    // misaligned accesses to just work, not raise an exception it has
+    // no handler for -- see phase5.md for the full story).
     assign sync_trap     = id_ex_illegal || csr_illegal || id_ex_is_ecall;
     assign take_interrupt = interrupt_pending && !sync_trap && !bus_stall;
     assign trap           = sync_trap || take_interrupt;
