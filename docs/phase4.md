@@ -1,124 +1,318 @@
-# Phase 4 — Hazard handling: forwarding, load-use stall, branch flush (complete)
+# Phase 4 — Hazards
 
-One commit, `ffe21a5`, 2026-08-18, titled "Phase 4: forwarding, load-use
-stall, branch flush -- 39/42 rv32ui-p pass." As covered in phase3.md, this
-is the same commit that introduced the pipeline registers themselves —
-there was no prior hazard-free pipelined state to compare against. This
-document covers the hazard logic and the CSR/trap groundwork that shipped
-alongside it.
+## What this phase was for
+
+Make the pipeline correct. Three mechanisms, built and verified one at a time,
+in the order the plan specified: **forwarding → load-use stall → branch
+flush.**
+
+The ordering matters. Once forwarding works, the only remaining data hazard is
+load-use, so a failure isolates cleanly. Build the stall first and a failure
+could be either mechanism.
+
+Target: back to the 39/42 Phase 2 achieved, but pipelined.
+
+---
 
 ## Forwarding
 
-Same three-term shape as `regfile`'s own write-first bypass (phase1.md):
-a source stage writes a register (`ex_mem_reg_we` / `mem_wb_reg_we`), its
-destination matches the reader's source address, and that address isn't
-x0. Two source registers (`rs1`, `rs2`) and two possible sources (EX/MEM,
-MEM/WB) give four forwarding signals — `fwd_a_mem`, `fwd_a_wb`,
-`fwd_b_mem`, `fwd_b_wb`. Priority is MEM before WB: if both match, MEM
-holds the more recently-issued write and is the one the program means.
-`fwd_rs1`/`fwd_rs2` feed the ALU, `branch_cmp`, and (see below) the CSR
-write-data path — everywhere a register value is needed in EX, it goes
-through the forwarding mux rather than reading `id_ex_rs1_data`/
-`id_ex_rs2_data` directly.
+### The problem
 
-`ex_mem_wb_value` — what EX/MEM would actually write back if it reached
-WB — has to be computed the same way the real writeback mux computes it
-(CSR read data, or PC+4 for a jump-and-link, or the ALU result), since a
-dependent instruction one stage behind needs the value MEM is *about* to
-produce, not a placeholder.
-
-## Load-use stall
-
-```verilog
-wire load_use = id_ex_mem_re
-            && (id_ex_rd_addr != 5'b0)
-            && ((id_ex_rd_addr == rs1_addr) || (id_ex_rd_addr == rs2_addr));
+```
+add x5, x1, x2      # I1
+add x6, x5, x3      # I2 -- reads x5
 ```
 
-A load's result isn't available until it's in MEM — one stage later than
-an ALU result, which forwarding can already cover from EX/MEM. When the
-instruction currently in ID needs a register that the instruction ahead of
-it in ID/EX is loading, there's nothing to forward yet; the pipeline has
-to stall for one cycle. `load_use` holds `pc` and `if_id` in place (the
-same instruction is re-presented to ID next cycle) and forces `id_ex` into
-a bubble — a NOP with every control signal cleared — using the same
-`flush || load_use` branch as an actual pipeline flush (see below), since
-either way ID/EX must not let a stale or repeated instruction execute.
+I1's result exists at the end of EX in cycle 3. I2 needs it during cycle 4. But
+I2 read the register file in cycle 3, before the result existed, so
+`id_ex_rs1_data` holds the stale value.
+
+The value is not missing — it is sitting in `ex_mem_alu_result`, one stage
+ahead. Forwarding is a wire from there back to the ALU input, and a mux to
+select it.
+
+### Where the value lives, by distance
+
+| reader is | when it is in EX, I1 is in | value lives in |
+|---|---|---|
+| 1 after | MEM | `ex_mem_*` |
+| 2 after | WB | `mem_wb_*` / `wb_data` |
+| 3 after | retiring that same cycle | regfile bypass |
+| 4+ after | done | regfile array |
+
+Three mechanisms for three distances. The third was already built in Phase 1 —
+the regfile's write-first bypass — and this phase enabled it by flipping
+`.BYPASS(0)` to `.BYPASS(1)`. The combinational loop that forced it off in
+Phase 2 is gone, because ID and WB now hold different instructions with
+pipeline registers between them.
+
+### What gets forwarded
+
+Not `alu_result`. That is wrong for three instruction types: `jal` and `jalr`
+write `pc_plus4`, and CSR reads write `csr_rdata`.
+
+So a wire computes **the value the instruction will eventually write back**:
+
+```verilog
+wire [31:0] ex_mem_wb_value = (ex_mem_wb_sel == 2'b11) ? ex_mem_csr_rdata :
+                              (ex_mem_wb_sel == 2'b10) ? ex_mem_pc_plus4  :
+                                                         ex_mem_alu_result;
+```
+
+Note the deliberate absence of a `wb_sel == 01` arm. A load falls through to
+`ex_mem_alu_result`, which is the memory *address*, not the loaded data. That is
+wrong, and intentionally so — the loaded data does not exist yet. It is the case
+forwarding cannot fix, and the stall prevents it ever being used.
+
+From WB, `wb_data` is already the fully-resolved writeback value including
+loaded data, so nothing extra is needed.
+
+### The condition
+
+Four wires — two operands × two source stages — each three terms:
+
+> the source stage writes a register **and** its `rd` matches the reader's `rs`
+> **and** that register is not `x0`
+
+Identical in shape to the regfile bypass written in Phase 1. The `!= 0` term is
+why a `nop` in MEM does not forward its discarded result to an instruction
+reading `x0`.
+
+`id_ex_rs1_addr` and `id_ex_rs2_addr` were carried through the pipeline in
+Phase 3 specifically for these comparisons.
+
+### Priority: MEM before WB
+
+```
+add x5, x1, x2
+add x5, x3, x4      # writes x5 again
+add x6, x5, x7      # which x5?
+```
+
+When the third is in EX, the second is in MEM and the first is in WB. Both
+match. MEM holds the more recent write, so MEM wins — checked first in the mux
+chain.
+
+Getting this backwards produces a bug that only appears when the same register
+is written twice within three instructions, which is common in compiled code
+and painful to locate.
+
+### The muxes go at the top of EX
+
+`id_ex_rs1_data` and `id_ex_rs2_data` are read by five things: the `alu_a` mux,
+the `alu_b` mux, `branch_cmp`, the store data captured into `ex_mem_rs2_data`,
+and `csr_wdata`.
+
+A branch comparing stale values takes the wrong path. A store writing stale
+data corrupts memory. Both need forwarding just as much as the ALU does.
+
+So the forwarding is built **once**, as `fwd_rs1` and `fwd_rs2` at the top of
+EX, and every use of the raw pipeline register in that stage is replaced. After
+the change, `id_ex_rs1_data` and `id_ex_rs2_data` appear in exactly two places
+in the file: the ID/EX capture, and the fallback arm of the forwarding muxes.
+
+Missing one of the five is easy. `csr_wdata` was in fact missed on the first
+pass and caught in review — and it matters, because riscv-tests' init code does
+`auipc t0` / `addi t0` / `csrw mtvec, t0` back to back.
+
+---
 
 ## Branch flush
 
-```verilog
-assign pc_redirect = trap || id_ex_is_mret || id_ex_is_jal || id_ex_is_jalr
-                     || (id_ex_is_branch && branch_taken);
+Built second rather than third, out of the planned order, because forwarding
+could not be observed until it was: the core derailed on the first `jal` in the
+init code before reaching any instruction with a data dependency.
+
+### The shadow
+
+Branches resolve in EX. By the time `pc_redirect` goes high, two more fetches
+have already happened.
+
+| cycle | IF | ID | EX |
+|---|---|---|---|
+| 1 | `jal` | — | — |
+| 2 | @ +4 | `jal` | — |
+| 3 | @ +8 | @ +4 | **`jal` resolves** |
+| 4 | target | @ +8 | @ +4 |
+
+The PC redirects at the end of cycle 3, so cycle 4 fetches correctly. But the
+two instructions at +4 and +8 are already in the pipe, and nothing removes
+them.
+
+This is not a branch *prediction* problem — `jal` is unconditional, there is
+nothing to predict. The shadow exists purely because the redirect is computed
+two stages after the fetch. Not-taken branches cost nothing.
+
+### The fix
+
+At the edge where `pc_redirect` is high, IF/ID and ID/EX are cleared rather
+than loaded.
+
+**Only those two.** EX/MEM and MEM/WB hold instructions fetched before the
+branch, which are legitimately executing. The branch itself is in EX and must
+complete.
+
+Clearing means **control signals only** — `reg_we`, `mem_we`, the branch and
+jump flags, the CSR enables. Zero those and the instruction becomes a nop
+flowing harmlessly through the remaining stages. Data fields do not matter.
+
+The flush signal is `pc_redirect` itself, which already includes `trap`. That
+covers traps for free, and it has to: when an instruction faults and the PC
+jumps to `mtvec`, the two behind it are equally wrong.
+
+A trapping instruction gets both treatments — its own writes suppressed by
+`reg_we_final`/`mem_we_final`, and the two behind it flushed. Two different
+mechanisms for "this instruction must not commit" versus "these instructions
+must not exist."
+
+### Stale state in the bubble
+
+The first working version flushed correctly but corrupted the PC chain.
+
+The flush branch cleared control signals and left `id_ex_pc` and `id_ex_instr`
+holding whatever was there. Harmless for the nop itself, but the stale PC
+propagated: `ex_mem_pc` and `mem_wb_pc` carried it into the trace, and a
+subsequent branch reading a corrupted `id_ex_pc` computed `pc + imm` from the
+wrong base.
+
+The IF/ID flush had a subtler version: it assigned `if_id_pc <= pc`, but during
+a flush `pc` is being redirected, so the nop received the *target's* address.
+
+The fix was to give the bubble its own clean state — zero the PC fields, load a
+real nop into the instruction field, and clear `rs1_addr`/`rs2_addr`/`rd_addr`
+as well. Those last three matter because the forwarding comparators read them
+every cycle: a stale `rd_addr` in a bubble could make the next instruction's
+forwarding logic see a dependency that does not exist.
+
+---
+
+## The reset bug
+
+This one cost the most time, and it had been present since Phase 3.
+
+### The symptom
+
+After the flush was working, every test still failed identically — same
+timeout, same PC, `0x000000c4`. And the PC in the trace lost bit 31 after the
+first few instructions: `80000000`, then `00000000`, `00000004`, `00000050`.
+
+The core was running in low memory.
+
+### Finding it
+
+The trace comparison was not enough here, because the divergence was at
+instruction 0 and everything after was garbage. GTKWave was.
+
+Signals added: `pc`, `if_id_pc`, `if_id_instr`, `id_ex_instr`, `id_ex_is_jal`,
+`flush`, `pc_redirect`, `pc_target`, `ex_mem_pc`, `mem_wb_pc`.
+
+The waveform showed `flush` and `pc_redirect` going high around 30 ns —
+**before** `id_ex_is_jal` rose at 60 ns. A redirect with no jump.
+
+### The cause
+
+`if_id_instr` reset to `32'b0`.
+
+Instruction word zero has opcode `0000000`, which the decoder's `default` arm
+correctly flags as illegal. That propagated to `id_ex_illegal`, raised `trap` in
+EX, raised `pc_redirect`, and jumped the PC to `mtvec_out` — which is zero at
+reset.
+
+So the core trapped on its own reset-cleared pipeline slots and jumped to
+address 0. Everything after ran in low memory, and `imem`'s address slicing
+made that fetch *something*, so it kept going.
+
+### The fix
+
+Reset instruction registers to `32'h00000013` — `addi x0, x0, 0`, a genuine nop
+— never zero.
+
+This is worth stating as a rule because it recurs: **a zeroed instruction
+register is an illegal instruction, and an illegal instruction with `mtvec` at
+zero sends the PC to address 0.** Any register holding an instruction word
+should reset to a nop.
+
+---
+
+## Load-use stall
+
+Built last, and the smallest of the three.
+
+### The problem forwarding cannot fix
+
+```
+lw  x5, 0(x1)
+add x6, x5, x2      # needs x5 immediately
 ```
 
-All five reasons IF should stop fetching sequentially — a resolved taken
-branch, `jal`/`jalr` (always taken), `mret`, and a trap — are resolved at
-the EX stage boundary and folded into one `pc_redirect` signal.
-`pc_target` is `trap ? mtvec_out : id_ex_is_mret ? mepc_out : id_ex_is_jalr
-? (alu_result & ~32'd1) : (id_ex_pc + id_ex_imm)`. `flush` (an alias for
-`pc_redirect`) nulls both IF/ID (`if_id_instr <= 32'h00000013`, a real
-`addi x0,x0,0`) and ID/EX on the same edge PC redirects — two
-instructions are always discarded on any taken branch/jump/trap/`mret`,
-since IF and ID were both already committed to the pre-redirect path.
+| cycle | 3 | 4 |
+|---|---|---|
+| `lw` | EX (computes address) | **MEM (dmem reading)** |
+| `add` | ID | **EX (needs x5 now)** |
 
-One priority detail worth flagging here since it becomes a real bug later:
-the PC register's own always-block checks `load_use` and holds on it,
-falling through to `pc_next` (which already embeds `pc_redirect`)
-otherwise — there's no explicit "flush wins" branch for PC the way IF/ID
-and ID/EX both have. That's harmless in this phase: nothing that can cause
-`load_use` can also be the source of a `pc_redirect` yet, since traps and
-`mret` only come from instructions that don't set `mem_re`, and branches/
-jumps don't write a register a *following* load could depend on in the
-hazard sense `load_use` checks. It stops being harmless once Phase 5 adds
-externally-timed interrupts, which can land on any instruction including
-a load — see phase5.md for the bug that surfaced and its fix.
+In cycle 4 the `add` needs `x5`, but `dmem` is fetching it during that very
+cycle. The data does not exist until the end of cycle 4. No wire can forward a
+value that has not been read.
 
-## CSR and trap groundwork
+The rule this establishes: **forwarding fixes "the answer exists but has not
+been filed"; stalling fixes "the answer does not exist yet."**
 
-`csr.v` is new this commit: six registers (`mstatus`, `mtvec`, `mscratch`,
-`mepc`, `mcause`, plus read-only `mhartid`), three access modes (`csrrw`/
-`csrrs`/`csrrc`, and their immediate forms via `csr_use_imm`), and a
-`csr_ignored` list — `misa`, `medeleg`, `mideleg`, `mie`, `mtval`, `mip`,
-`satp`, `pmpcfg0`, `pmpaddr0` — addresses that are recognized but not
-backed by real state: writes are accepted and reads return zero, which is
-legal WARL (Write Any values, Read Legal values) behavior and avoids
-spurious illegal-instruction traps when riscv-tests' startup code touches
-them. Anything else unrecognized sets `csr_illegal`. The file's own
-opening comment lists what's deliberately still missing: "mie/mip,
-interrupt delegation, counters, privilege modes, CSR write-permission
-checks" — explicitly deferred, at the time, to "phase 5."
+### Detection
 
-`decoder.v` gains real `SYSTEM`-opcode decoding in place of Phase 2's
-empty case: `funct3 == 000` distinguishes `ecall` (`is_ecall`), `ebreak`
-(routed to the same trap path as `ecall`), and `mret` (encoding `12'h302`)
-from an otherwise-illegal `SYSTEM` instruction; every other `funct3`
-decodes as a CSR instruction, with `csr_use_imm = funct3[2]` selecting the
-immediate forms and `funct3[1:0]` selecting `csrrw`/`csrrs`/`csrrc`. Two
-narrow optimizations sit in the decode logic directly: `csrrw` with
-`rd = x0` sets `csr_re = 0` (nothing needs the old value if it's being
-discarded), and `csrrs`/`csrrc` with `rs1 = x0` sets `csr_we = 0` (setting
-or clearing bits with an all-zero mask changes nothing, so there's no
-write to perform).
+```verilog
+wire load_use = id_ex_mem_re
+             && (id_ex_rd_addr != 5'b0)
+             && ((id_ex_rd_addr == rs1_addr) || (id_ex_rd_addr == rs2_addr));
+```
 
-`trap = id_ex_illegal || csr_illegal || id_ex_is_ecall`, and `trap_cause`
-is `id_ex_is_ecall ? 32'd11 : 32'd2` — 11 is the RISC-V cause code for an
-environment call from M-mode (the only mode that exists yet), 2 is illegal
-instruction. `reg_we_final`/`mem_we_final` gate the real `reg_we`/`mem_we`
-with `!trap`, so a faulting instruction commits no side effects even
-though it's already progressed through EX by the time the trap is
-detected. In `csr.v` itself, trap entry is given priority over any
-instruction-side CSR write reaching the same cycle, since a faulting
-instruction must not be allowed to commit its own CSR update on the way
-out.
+Note this compares against the **ID-stage** `rs1_addr`/`rs2_addr` — the
+instruction currently decoding — not `id_ex_rs1_addr`. A different question from
+forwarding: "does the instruction being decoded right now need what the load is
+fetching?"
 
-## Verified
+`id_ex_mem_re` was carried through Phase 3 for exactly this.
 
-39/42 `rv32ui-p-*` pass, per this commit's own message. (Two of the three
-remaining failures at this point — `ld_st` and `ma_data` — are fixed in
-Phase 5, steps 10 and 12 respectively; `fence_i` remains out of scope
-today, see phase5.md.) I did not rebuild this exact historical commit to
-re-derive that number independently — it's taken directly from the commit
-message, which is as close to primary-source verification as a retroactive
-count of a past state can get without altering the working tree to check
-out old history.
+### The response
+
+| register | action |
+|---|---|
+| `pc` | hold |
+| IF/ID | hold |
+| ID/EX | bubble |
+| EX/MEM, MEM/WB | normal |
+
+The load must keep advancing through MEM to WB or it never completes and the
+stall never resolves. The dependent instruction freezes. The gap between them
+fills with a bubble.
+
+**Stall upstream, let downstream drain.**
+
+Priority: flush before stall. If a branch redirected, the instruction being
+stalled for is on the wrong path and should be discarded rather than held.
+
+---
+
+## Result: 39 / 42
+
+Same three exclusions as Phase 2 — `fence_i`, `ma_data`, `ld_st` — all still
+traceable to missing privilege modes, and all unrelated to hazard handling.
+
+The pass pattern is itself the evidence each mechanism works. Every load
+passing is the stall. Every branch and jump passing is the flush. Every
+dependent-instruction sequence passing is forwarding.
+
+## What this phase established
+
+A correct pipelined RV32I core. Everything after it is peripherals,
+verification, and performance.
+
+Also two lessons that recurred:
+
+**`make lint` does not rebuild.** Three rounds of edits produced identical
+results because a stale binary was being run. Only `make MODULE=x` recompiles.
+
+**A bug in one mechanism can hide another.** Forwarding appeared broken when it
+was not, because the core derailed on the first `jal` before reaching any
+dependent instruction. The one-mechanism-at-a-time discipline is what made this
+diagnosable — when everything failed identically at the same address, it was
+clearly not a data-dependency problem.
